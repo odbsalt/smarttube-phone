@@ -100,13 +100,9 @@ XY=$(center_of_text "You")
 if [ -n "$XY" ]; then adb shell input tap $XY; else adb shell input tap 945 2280; fi
 sleep 6
 shot 7_you
-for i in 1 2 3 4; do
-  XY=$(center_of_text "Settings")
-  if [ -n "$XY" ]; then break; fi
-  adb shell input swipe 900 265 250 265 300
-  sleep 1
-done
-echo "settings chip at: $XY"
+# The You page lists its places as rows: Settings is one of them
+XY=$(center_of_text "Settings")
+echo "settings row at: $XY"
 if [ -n "$XY" ]; then
   adb shell input tap $XY
   sleep 4

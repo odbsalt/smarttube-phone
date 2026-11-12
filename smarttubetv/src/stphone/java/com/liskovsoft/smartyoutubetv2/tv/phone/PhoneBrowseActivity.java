@@ -66,6 +66,8 @@ public class PhoneBrowseActivity extends PhoneActivity implements BrowseView, Fe
     private BrowseSection mLoadedSection; // what the presenter actually loads (Home falls back when signed out)
     private View mSignInCard;
     private PhoneSubscriptionsHeader mSubsHeader; // channels row and filter chips above the Subscriptions feed
+    private PhoneYouDashboard mYou; // the You tab's front page: places, then History and Playlists as rows of cards
+    private boolean mYouDashboard; // the You tab shows its front page, not one of its sections
     private VideoGroup mSubsChannelGroup; // the selected channel's videos, shown instead of the feed of all channels
     private Object mSubsAllContent; // the feed of all channels, put back when the channel is unselected
     private io.reactivex.disposables.Disposable mSubsChannelAction;
@@ -230,6 +232,9 @@ public class PhoneBrowseActivity extends PhoneActivity implements BrowseView, Fe
     protected void onDestroy() {
         super.onDestroy();
         MediaServiceManager.instance().removeAccountListener(this);
+        if (mYou != null) {
+            mYou.release();
+        }
         if (mSubsHeader != null) {
             mSubsHeader.release();
         }
@@ -244,6 +249,10 @@ public class PhoneBrowseActivity extends PhoneActivity implements BrowseView, Fe
             focusSection(sectionById(MediaGroup.TYPE_SUBSCRIPTIONS));
             return;
         }
+        if (mCurrentTab == TAB_YOU && !mYouDashboard) {
+            showYouDashboard(); // from History, Settings...: back to the You page
+            return;
+        }
         if (mCurrentTab != TAB_HOME && hasTab(TAB_HOME)) {
             selectTab(TAB_HOME);
             return;
@@ -255,6 +264,9 @@ public class PhoneBrowseActivity extends PhoneActivity implements BrowseView, Fe
     public void onAccountChanged(Account account) {
         runOnUiThread(() -> {
             updateAccountViews();
+            if (mYouDashboard) {
+                mYou.show(); // another account: its History and Playlists
+            }
             if (mCurrentSection != null && mCurrentSection.getId() == MediaGroup.TYPE_HOME) {
                 focusSection(mCurrentSection);
             }
@@ -326,6 +338,11 @@ public class PhoneBrowseActivity extends PhoneActivity implements BrowseView, Fe
         mRefresh.setColorSchemeColors(getResources().getColor(R.color.phone_accent));
         mRefresh.setProgressBackgroundColorSchemeColor(getResources().getColor(R.color.phone_surface_2));
         mRefresh.setOnRefreshListener(() -> {
+            if (mYouDashboard) {
+                mRefresh.setRefreshing(false);
+                mYou.show(); // History and Playlists again
+                return;
+            }
             if (mCurrentSection == null || mCurrentSection.getId() == MediaGroup.TYPE_SETTINGS) {
                 mRefresh.setRefreshing(false);
                 return;
@@ -350,8 +367,8 @@ public class PhoneBrowseActivity extends PhoneActivity implements BrowseView, Fe
 
     @Override
     protected boolean wantsSkeleton() {
-        // Settings isn't a video feed
-        return mCurrentSection == null || mCurrentSection.getId() != MediaGroup.TYPE_SETTINGS;
+        // Settings isn't a video feed, and neither is the You page
+        return !mYouDashboard && (mCurrentSection == null || mCurrentSection.getId() != MediaGroup.TYPE_SETTINGS);
     }
 
     private void syncBarPadding() {
@@ -385,6 +402,41 @@ public class PhoneBrowseActivity extends PhoneActivity implements BrowseView, Fe
         mTopAvatar.setOnClickListener(v -> selectTab(TAB_YOU));
         mSignInCard = getLayoutInflater().inflate(R.layout.phone_signin_card, mList, false);
         mSignInCard.findViewById(R.id.phone_signin_card_button).setOnClickListener(v -> YTSignInPresenter.instance(this).start());
+        mYou = new PhoneYouDashboard(this, new PhoneYouDashboard.Callback() {
+            @Override
+            public boolean hasSection(int sectionId) {
+                return sectionById(sectionId) != null;
+            }
+
+            @Override
+            public String sectionTitle(int sectionId) {
+                BrowseSection section = sectionById(sectionId);
+                return section != null ? section.getTitle() : "";
+            }
+
+            @Override
+            public void openSection(int sectionId) {
+                BrowseSection section = sectionById(sectionId);
+                if (section != null) {
+                    focusSection(section);
+                }
+            }
+
+            @Override
+            public void openDownloads() {
+                PhoneDownloadsActivity.open(PhoneBrowseActivity.this);
+            }
+
+            @Override
+            public boolean isSignedIn() {
+                return PhoneBrowseActivity.this.isSignedIn();
+            }
+
+            @Override
+            public FeedAdapter.Listener listener() {
+                return PhoneBrowseActivity.this;
+            }
+        });
         mSubsHeader = new PhoneSubscriptionsHeader(this, mList, new PhoneSubscriptionsHeader.Callback() {
             @Override
             public void onChannelSelected(Video channel) {
@@ -520,13 +572,31 @@ public class PhoneBrowseActivity extends PhoneActivity implements BrowseView, Fe
         mChips.removeAllViews();
         List<BrowseSection> sections = sectionsOfTab(mCurrentTab);
 
-        // The Subscriptions feed has its own channels row and filter chips (All opens the Channels section)
-        if ((sections.size() <= 1 && mCurrentTab != TAB_YOU) || isSubscriptionsFeed()) { // You always has Downloads
+        // The Subscriptions feed has its own channels row and filter chips (All opens the Channels section).
+        // The You page lists its places itself.
+        if ((sections.size() <= 1 && mCurrentTab != TAB_YOU) || isSubscriptionsFeed() || (mCurrentTab == TAB_YOU && mYouDashboard)) {
             mChipsScroll.setVisibility(View.GONE);
             return;
         }
 
         mChipsScroll.setVisibility(View.VISIBLE);
+
+        if (mCurrentTab == TAB_YOU) {
+            // Inside one of You's sections: a first chip leads back to the You page, the others switch sections
+            TextView back = new TextView(this);
+            back.setText("\u2039");
+            back.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
+            back.setGravity(Gravity.CENTER);
+            back.setPadding(dp(14), 0, dp(14), dp(2));
+            back.setBackgroundResource(R.drawable.phone_chip_bg);
+            back.setTextColor(getResources().getColor(R.color.phone_text));
+            back.setContentDescription(getString(R.string.phone_you_back));
+            back.setOnClickListener(v -> showYouDashboard());
+            LinearLayout.LayoutParams backParams = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(32));
+            backParams.setMarginStart(dp(4));
+            backParams.setMarginEnd(dp(4));
+            mChips.addView(back, backParams);
+        }
 
         for (BrowseSection section : sections) {
             TextView chip = new TextView(this);
@@ -619,6 +689,8 @@ public class PhoneBrowseActivity extends PhoneActivity implements BrowseView, Fe
     private void scrollToTopOrRefresh() {
         if (mList.canScrollVertically(-1)) {
             mList.smoothScrollToPosition(0);
+        } else if (mYouDashboard) {
+            mYou.show();
         } else {
             mPresenter.refresh(false);
         }
@@ -735,19 +807,41 @@ public class PhoneBrowseActivity extends PhoneActivity implements BrowseView, Fe
         return false;
     }
 
+    @Override
+    protected void updateEmptyState() {
+        if (mYouDashboard) {
+            hideMessage(); // the You page is the list's header: the list having no videos is how it should be
+            return;
+        }
+        super.updateEmptyState();
+    }
+
+    /** The You tab's front page (see PhoneYouDashboard). Its sections open from there, in the same tab. */
+    private void showYouDashboard() {
+        clearSubscriptionsChannel();
+        mYouDashboard = true;
+        mCurrentTab = TAB_YOU;
+        mCurrentSection = null;
+        mLoadedSection = null;
+        updateTabs();
+        updateChips();
+        mAccountHeader.setVisibility(View.VISIBLE);
+        hideMessage();
+        showProgress(false);
+        mAdapter.setFilter(null);
+        mAdapter.setMode(FeedAdapter.MODE_FLAT);
+        mAdapter.setHeaderView(mYou.getView());
+        mList.scrollToPosition(0);
+        mYou.show();
+    }
+
     private void selectTab(int tab) {
+        if (tab == TAB_YOU) {
+            showYouDashboard();
+            return;
+        }
         List<BrowseSection> sections = sectionsOfTab(tab);
         if (sections.isEmpty()) {
-            if (tab == TAB_YOU) {
-                // No library sections enabled: still show the account card
-                mCurrentTab = TAB_YOU;
-                mCurrentSection = null;
-                updateTabs();
-                updateChips();
-                mAccountHeader.setVisibility(View.VISIBLE);
-                mAdapter.setMode(FeedAdapter.MODE_FLAT);
-                hideMessage();
-            }
             return;
         }
 
@@ -769,6 +863,7 @@ public class PhoneBrowseActivity extends PhoneActivity implements BrowseView, Fe
 
     private void focusSection(BrowseSection section) {
         clearSubscriptionsChannel();
+        mYouDashboard = false;
         mCurrentSection = section;
         mCurrentTab = tabOf(section);
         mTabSectionIds[mCurrentTab] = section.getId();
@@ -986,7 +1081,7 @@ public class PhoneBrowseActivity extends PhoneActivity implements BrowseView, Fe
             PhoneShortsQueue.append(group); // next batch for the Shorts player, even though Home is behind it
         }
         BrowseSection expected = mLoadedSection != null ? mLoadedSection : mCurrentSection;
-        if (section != null && expected != null && section.getId() != expected.getId()) {
+        if (mYouDashboard || (section != null && expected != null && section.getId() != expected.getId())) {
             return; // late result of a section the user already left
         }
         if (mSubsChannelGroup != null && group.getId() != mSubsChannelGroup.getId()) {
@@ -1027,8 +1122,11 @@ public class PhoneBrowseActivity extends PhoneActivity implements BrowseView, Fe
         if (group == null) {
             return;
         }
-        hideMessage();
         mSettingsGroup = group;
+        if (mYouDashboard) {
+            return; // late result: Settings was left for the You page
+        }
+        hideMessage();
         mAdapter.setSettings(groupedSettings(group));
     }
 
@@ -1163,11 +1261,17 @@ public class PhoneBrowseActivity extends PhoneActivity implements BrowseView, Fe
 
     @Override
     public void showError(ErrorFragmentData data) {
+        if (mYouDashboard) {
+            return; // late result of a section that was left for the You page
+        }
         super.showError(data);
     }
 
     @Override
     public void showProgressBar(boolean show) {
+        if (mYouDashboard && show) {
+            return; // nothing of the presenter's loads on the You page
+        }
         if (!show) {
             stopRefreshing();
         }
