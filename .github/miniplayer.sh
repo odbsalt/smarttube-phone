@@ -116,7 +116,11 @@ if [ -n "$XY" ]; then
   shot 9_settings_more
 fi
 
-# 8. The Notifications tab: its own screen (signed out here: the hint to sign in)
+# 8. The Notifications tab: its own screen (signed out here: the hint to sign in).
+# From Home: on Settings a row is called Notifications too, and the tab would not be the first match.
+XY=$(center_of_text "Home")
+if [ -n "$XY" ]; then adb shell input tap $XY; fi
+sleep 3
 XY=$(center_of_text "Notifications")
 echo "notifications tab at: $XY"
 if [ -n "$XY" ]; then
