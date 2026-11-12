@@ -98,6 +98,20 @@ public class PhoneApplication extends MainApplication {
             prefs.edit().putBoolean("background_pip_v2", true).putBoolean("background_pip_undone", true).apply();
         }
 
+        {
+            // Build 95's Quality > Auto saved SmartTube's "default" video entry, which turns the video off (sound only,
+            // a blank screen). Back to the phone's quality.
+            com.liskovsoft.smartyoutubetv2.common.prefs.PlayerData playerData =
+                    com.liskovsoft.smartyoutubetv2.common.prefs.PlayerData.instance(this);
+            com.liskovsoft.smartyoutubetv2.common.exoplayer.selector.FormatItem video =
+                    playerData.getFormat(com.liskovsoft.smartyoutubetv2.common.exoplayer.selector.FormatItem.TYPE_VIDEO);
+            if (video != null && (video.isDefault() || video.getHeight() <= 0)) {
+                playerData.setFormat(com.liskovsoft.sharedutils.helpers.DeviceHelpers.isVP9ResolutionSupported(1080)
+                        ? com.liskovsoft.smartyoutubetv2.common.exoplayer.selector.FormatItem.VIDEO_FHD_VP9_60
+                        : com.liskovsoft.smartyoutubetv2.common.exoplayer.selector.FormatItem.VIDEO_FHD_AVC_30);
+            }
+        }
+
         if (!prefs.getBoolean("phone_quality_v1", false)) {
             com.liskovsoft.smartyoutubetv2.common.prefs.PlayerData playerData =
                     com.liskovsoft.smartyoutubetv2.common.prefs.PlayerData.instance(this);
