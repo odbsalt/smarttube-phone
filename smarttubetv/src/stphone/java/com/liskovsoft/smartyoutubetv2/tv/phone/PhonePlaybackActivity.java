@@ -248,6 +248,7 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
         super.onResume();
         mResumed = true;
         mPipEnterPending = false;
+        mAppLeaving = false;
         backFromMiniPlayer();
         moveBackToHomeTaskIfNeeded();
         allowLockScreen();
@@ -574,7 +575,8 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
      * player, not Shorts) and a video plays.
      */
     private boolean canEnterPip() {
-        return Build.VERSION.SDK_INT >= 26 && mResumed && !isFinishing() && !mShortsMode && !mMinimized && !mMinimizing
+        return Build.VERSION.SDK_INT >= 26 && mResumed && !isFinishing() && !mAppLeaving && !mShortsMode
+                && !isShort(currentVideo()) && !mMinimized && !mMinimizing
                 && !mShrinkDragging && mPlayer != null && mPlayer.getPlayWhenReady() && pipOnLeave(this)
                 && !(Build.VERSION.SDK_INT >= 24 && isInPictureInPictureMode())
                 && getPackageManager().hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE);
@@ -620,7 +622,10 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
                 android.graphics.drawable.Icon.createWithResource(this, playing ? R.drawable.ic_phone_pause : R.drawable.ic_phone_play),
                 label, label, toggle)));
         if (Build.VERSION.SDK_INT >= 31) {
-            builder.setAutoEnterEnabled(auto);
+            // Never on its own: Android's automatic entry also fires when the app itself opens another screen (Home for
+            // the mini player, the share sheet, a channel...), which put the whole app into the floating window.
+            // The window opens only from onUserLeaveHint, when the user really leaves the app.
+            builder.setAutoEnterEnabled(false);
             builder.setSeamlessResizeEnabled(false); // a cross-fade instead of half drawn frames while resizing
         }
         return builder.build();
@@ -643,15 +648,30 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
         return new android.util.Rational(format.width, format.height);
     }
 
-    /** Home pressed or the app switched (Android 8 to 11; 12+ enters on its own from the parameters above) */
+    /**
+     * Set while this screen opens another one itself (Home for the mini player, a channel, comments, the share
+     * sheet...): Android reports that as the user leaving too, and it must not open the floating window.
+     */
+    private boolean mAppLeaving;
+    private final Runnable mClearAppLeaving = () -> mAppLeaving = false;
+
+    @Override
+    public void startActivityForResult(android.content.Intent intent, int requestCode, Bundle options) {
+        mAppLeaving = true;
+        mHandler.removeCallbacks(mClearAppLeaving);
+        mHandler.postDelayed(mClearAppLeaving, 1500);
+        super.startActivityForResult(intent, requestCode, options);
+    }
+
+    /** Home pressed or the app switched away from: the floating window (regular videos only, never Shorts) */
     @Override
     public void onUserLeaveHint() {
         if (!pipOnLeave(this)) {
             super.onUserLeaveHint(); // SmartTube's background modes (sound only, ...)
             return;
         }
-        if (getViewManager().isNewViewPending()) {
-            return; // one of the app's own screens is opening
+        if (mAppLeaving || getViewManager().isNewViewPending()) {
+            return; // one of the app's own screens is opening: not leaving the app
         }
         if (canEnterPip()) {
             enterPip();
@@ -737,26 +757,14 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
         mVideoBox.setLayoutParams(params);
 
         mDetails.setVisibility(withDetails ? View.VISIBLE : View.GONE);
-        mMiniProgress.setVisibility(mPortrait && !pip ? View.VISIBLE : View.GONE);
-        // Shorts fill the screen: their progress line sits just above the navigation bar, not under it
-        FrameLayout.LayoutParams progressParams = (FrameLayout.LayoutParams) mMiniProgress.getLayoutParams();
-        int progressBottom = shorts ? mNavInset : 0;
-        if (progressParams.bottomMargin != progressBottom) {
-            progressParams.bottomMargin = progressBottom;
-            mMiniProgress.setLayoutParams(progressParams);
-        }
+        // Shorts have their own progress line (with a red dot) above their tabs
+        mMiniProgress.setVisibility(mPortrait && !pip && !shorts ? View.VISIBLE : View.GONE);
         mRoot.setPadding(0, withDetails ? mStatusInset : 0, 0, 0);
 
         mShorts.setVisibility(shorts ? View.VISIBLE : View.GONE);
-        // A tall (three button) navigation bar would cover the Short's title: lift the overlay above it
-        int shortsBottom = mNavInset > dp(30) ? mNavInset - dp(14) : 0;
-        if (mShorts.getPaddingBottom() != shortsBottom) {
-            mShorts.setPadding(0, 0, 0, shortsBottom);
+        if (shorts) {
+            layoutShorts();
         }
-        View back = findViewById(R.id.phone_shorts_back);
-        FrameLayout.LayoutParams backParams = (FrameLayout.LayoutParams) back.getLayoutParams();
-        backParams.topMargin = dp(6) + mStatusInset;
-        back.setLayoutParams(backParams);
 
         mControlsTitle.setVisibility(mPortrait ? View.GONE : View.VISIBLE);
         if (mPortrait && mPlayer != null) {
@@ -1894,6 +1902,9 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
         int progress = duration > 0 ? (int) Math.max(0, Math.min(1000, position * 1000 / duration)) : 0;
 
         setMiniProgress(progress);
+        if (mShortsMode && !mIsSeeking) {
+            ((SeekBar) findViewById(R.id.phone_shorts_seek)).setProgress(progress);
+        }
         updateLoading();
 
         boolean settled = !mAwaitingNewVideo && !mPaging && !mPageAnimating;
@@ -1960,10 +1971,101 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
 
     // region Shorts
 
+    /** The Shorts screen around the video: room for the status bar at the top, the tabs and the progress line below */
+    private void layoutShorts() {
+        View tabs = findViewById(R.id.phone_shorts_tabs);
+        int tabsHeight = dp(54) + mNavInset;
+        if (tabs.getPaddingBottom() != mNavInset) {
+            tabs.setPadding(0, 0, 0, mNavInset);
+        }
+        setBottomMargin(findViewById(R.id.phone_shorts_seek), tabsHeight - dp(9)); // the line sits on the tabs' edge
+        setBottomMargin(findViewById(R.id.phone_shorts_info), tabsHeight + dp(22));
+        setBottomMargin(findViewById(R.id.phone_shorts_side), tabsHeight + dp(18));
+        setBottomMargin(findViewById(R.id.phone_shorts_scrim), tabsHeight);
+        View top = findViewById(R.id.phone_shorts_top);
+        FrameLayout.LayoutParams topParams = (FrameLayout.LayoutParams) top.getLayoutParams();
+        if (topParams.topMargin != dp(6) + mStatusInset) {
+            topParams.topMargin = dp(6) + mStatusInset;
+            top.setLayoutParams(topParams);
+        }
+    }
+
+    private static void setBottomMargin(View view, int margin) {
+        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) view.getLayoutParams();
+        if (params.bottomMargin != margin) {
+            params.bottomMargin = margin;
+            view.setLayoutParams(params);
+        }
+    }
+
+    /** The app's tabs under the Shorts (Shorts chosen): another tab closes the Shorts and opens it on Home's screen */
+    private void setupShortsTabs() {
+        LinearLayout tabs = findViewById(R.id.phone_shorts_tabs);
+        int[] icons = {R.drawable.ic_phone_tab_home, R.drawable.ic_phone_tab_shorts_on, R.drawable.ic_phone_tab_subs,
+                R.drawable.ic_phone_tab_bell, R.drawable.ic_phone_account};
+        int[] labels = {R.string.header_home, R.string.header_shorts, R.string.header_subscriptions,
+                R.string.phone_tab_notifications, R.string.phone_tab_you};
+        String[] targets = {"tab_home", null, "subscriptions", "tab_notifications", "tab_you"};
+        for (int i = 0; i < icons.length; i++) {
+            LinearLayout tab = new LinearLayout(this);
+            tab.setOrientation(LinearLayout.VERTICAL);
+            tab.setGravity(Gravity.CENTER);
+            tab.setPadding(0, dp(7), 0, dp(5));
+            ImageView icon = new ImageView(this);
+            icon.setImageResource(icons[i]);
+            icon.setImageTintList(ColorStateList.valueOf(Color.WHITE));
+            tab.addView(icon, new LinearLayout.LayoutParams(dp(24), dp(24)));
+            TextView label = new TextView(this);
+            label.setText(labels[i]);
+            label.setTextColor(Color.WHITE);
+            label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f);
+            label.setMaxLines(1);
+            LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            labelParams.topMargin = dp(4);
+            tab.addView(label, labelParams);
+            String target = targets[i];
+            tab.setOnClickListener(v -> {
+                if (target == null) {
+                    return; // Shorts: here already
+                }
+                startActivity(new android.content.Intent(this, PhoneBrowseActivity.class)
+                        .putExtra(PhoneBrowseActivity.EXTRA_SHORTCUT, target)
+                        .addFlags(android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP));
+                closePlayer();
+            });
+            tabs.addView(tab, new LinearLayout.LayoutParams(0, dp(54), 1f));
+        }
+    }
+
     private void setupShorts() {
         findViewById(R.id.phone_shorts_back).setOnClickListener(v -> onBackPressed());
         findViewById(R.id.phone_shorts_channel).setOnClickListener(v -> clickButton(R.id.action_channel));
+        findViewById(R.id.phone_shorts_channel_tile).setOnClickListener(v -> clickButton(R.id.action_channel));
         findViewById(R.id.phone_shorts_subscribe).setOnClickListener(v -> clickButton(R.id.action_subscribe));
+        findViewById(R.id.phone_shorts_search).setOnClickListener(v ->
+                com.liskovsoft.smartyoutubetv2.common.app.presenters.SearchPresenter.instance(this).startSearch(null));
+        findViewById(R.id.phone_shorts_more).setOnClickListener(v -> clickButton(R.id.lb_control_high_quality));
+        setupShortsTabs();
+        SeekBar shortsSeek = findViewById(R.id.phone_shorts_seek);
+        shortsSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {
+                mIsSeeking = true;
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+                mIsSeeking = false;
+                if (mPlayer != null && mPlayer.getDurationMs() > 0) {
+                    mPlayer.setPositionMs(mPlayer.getDurationMs() * seekBar.getProgress() / 1000);
+                }
+            }
+        });
 
         LinearLayout actions = findViewById(R.id.phone_shorts_actions);
         addShortsAction(actions, R.id.action_thumbs_up, R.drawable.ic_phone_like, getString(R.string.phone_like));
@@ -1971,7 +2073,6 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
         addShortsAction(actions, R.id.action_chat, R.drawable.ic_phone_comments, getString(R.string.phone_comments));
         addShortsAction(actions, R.id.action_share, R.drawable.ic_phone_share, getString(R.string.phone_share));
         addShortsAction(actions, R.id.action_playlist_add, R.drawable.ic_phone_save, getString(R.string.phone_save));
-        addShortsAction(actions, R.id.lb_control_high_quality, R.drawable.ic_phone_more, null);
 
         GestureDetector detector = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
             @Override
@@ -2308,7 +2409,9 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
             return;
         }
         presenter().openVideo(video);
-        if (PhoneShortsQueue.isNearEnd(video)) {
+        if (PhoneShortsQueue.hasOwnFeed()) {
+            PhoneShortsQueue.markPlayed(video); // also loads the next page near the end
+        } else if (PhoneShortsQueue.isNearEnd(video)) {
             // Load more Shorts into the same list
             Video last = PhoneShortsQueue.last();
             if (last != null) {
@@ -2544,19 +2647,20 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
         item.setOrientation(LinearLayout.VERTICAL);
         item.setGravity(Gravity.CENTER_HORIZONTAL);
         item.setTag(buttonId);
-        item.setPadding(dp(6), dp(8), dp(6), dp(8));
+        item.setPadding(dp(8), dp(9), dp(8), dp(9));
 
+        // As in the YouTube app: plain white icons (no circle behind them), the count under each
         ImageView image = new ImageView(this);
         image.setImageResource(icon);
-        image.setBackgroundResource(R.drawable.phone_play_bg);
-        image.setPadding(dp(11), dp(11), dp(11), dp(11));
+        image.setPadding(dp(2), dp(2), dp(2), dp(2));
         image.setImageTintList(ColorStateList.valueOf(Color.WHITE));
-        item.addView(image, new LinearLayout.LayoutParams(dp(50), dp(50)));
+        image.setElevation(dp(2));
+        item.addView(image, new LinearLayout.LayoutParams(dp(34), dp(34)));
 
         TextView text = new TextView(this);
         text.setText(label);
         text.setTextColor(Color.WHITE);
-        text.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        text.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         text.setShadowLayer(4, 0, 1, 0x99000000);
         text.setGravity(Gravity.CENTER);
         text.setVisibility(label != null ? View.VISIBLE : View.GONE);
@@ -2576,6 +2680,7 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
         ((TextView) findViewById(R.id.phone_shorts_title)).setText(video.getTitle());
         ((TextView) findViewById(R.id.phone_shorts_author)).setText(video.getAuthor());
         PhoneUi.bindAuthorAvatar(findViewById(R.id.phone_shorts_avatar), video);
+        PhoneUi.bindAuthorAvatar(findViewById(R.id.phone_shorts_channel_tile), video);
 
         boolean subscribed = getButtonState(R.id.action_subscribe) == PlayerUI.BUTTON_ON;
         TextView subscribe = findViewById(R.id.phone_shorts_subscribe);

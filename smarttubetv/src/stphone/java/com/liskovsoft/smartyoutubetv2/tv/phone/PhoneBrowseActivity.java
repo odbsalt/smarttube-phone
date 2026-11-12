@@ -8,6 +8,8 @@ import android.text.TextUtils;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -127,6 +129,22 @@ public class PhoneBrowseActivity extends PhoneActivity implements BrowseView, Fe
             com.liskovsoft.smartyoutubetv2.common.app.presenters.SearchPresenter.instance(this).startSearch(null);
             return;
         }
+        // A tab tapped on the Shorts screen
+        if ("tab_home".equals(shortcut) || "tab_you".equals(shortcut) || "tab_notifications".equals(shortcut)) {
+            if (mSections.isEmpty()) {
+                if (attempt < 20) {
+                    mList.postDelayed(() -> handleShortcut(intent, attempt + 1), 250);
+                }
+                return;
+            }
+            intent.removeExtra(EXTRA_SHORTCUT);
+            if ("tab_notifications".equals(shortcut)) {
+                PhoneNotificationsActivity.open(this);
+            } else {
+                selectTab("tab_you".equals(shortcut) ? TAB_YOU : TAB_HOME);
+            }
+            return;
+        }
         int sectionId = "shorts".equals(shortcut) ? MediaGroup.TYPE_SHORTS
                 : "history".equals(shortcut) ? MediaGroup.TYPE_HISTORY : MediaGroup.TYPE_SUBSCRIPTIONS;
         BrowseSection section = sectionById(sectionId);
@@ -164,6 +182,14 @@ public class PhoneBrowseActivity extends PhoneActivity implements BrowseView, Fe
         refreshSettingsRows(); // back from Android's notification settings
         refreshIncognito();
         PhoneNewVideos.schedule(this); // the background look at the Subscriptions feed (kept if already planned)
+        if (sectionById(MediaGroup.TYPE_SHORTS) != null) {
+            // The Shorts tab opens at once: its feed loads now, after Home had its turn
+            mList.postDelayed(() -> {
+                if (!isFinishing() && !isDestroyed()) {
+                    PhoneShortsQueue.preload(this, null);
+                }
+            }, 2500);
+        }
     }
 
     /** The incognito glasses next to search while watch history is paused; tap them to turn incognito off */
@@ -640,7 +666,68 @@ public class PhoneBrowseActivity extends PhoneActivity implements BrowseView, Fe
         }
     }
 
+    private View mShortsCurtain;
+
+    /**
+     * The Shorts tab: straight into a Short. The Shorts feed is loaded ahead of time (see PhoneShortsQueue.preload),
+     * so this normally opens at once; otherwise a black screen with the loading circle shows until it's there (not
+     * Home's placeholder cards and error screen).
+     */
     private void playShorts() {
+        if (PhoneShortsQueue.isReady()) {
+            openShortsQueue();
+            return;
+        }
+        showShortsCurtain(true);
+        PhoneShortsQueue.preload(this, () -> {
+            showShortsCurtain(false);
+            if (isFinishing() || isDestroyed()) {
+                return;
+            }
+            if (PhoneShortsQueue.isReady()) {
+                openShortsQueue();
+            } else {
+                playShortsFromSection(); // the feed didn't come: SmartTube's Shorts section
+            }
+        });
+    }
+
+    private void openShortsQueue() {
+        Video first = PhoneShortsQueue.startVideo();
+        if (first == null) {
+            playShortsFromSection();
+            return;
+        }
+        PhoneShortsQueue.markPlayed(first);
+        PhonePlaybackActivity.releaseDetachedPlayer();
+        com.liskovsoft.smartyoutubetv2.common.app.presenters.PlaybackPresenter.instance(this).openVideo(first);
+    }
+
+    private void showShortsCurtain(boolean show) {
+        ViewGroup content = findViewById(android.R.id.content);
+        if (show && mShortsCurtain == null && content != null) {
+            FrameLayout curtain = new FrameLayout(this);
+            curtain.setBackgroundColor(android.graphics.Color.BLACK);
+            curtain.setClickable(true);
+            android.widget.ProgressBar spinner = new android.widget.ProgressBar(this);
+            spinner.setIndeterminateTintList(ColorStateList.valueOf(android.graphics.Color.WHITE));
+            curtain.addView(spinner, new FrameLayout.LayoutParams(dp(44), dp(44), Gravity.CENTER));
+            curtain.setElevation(dp(30));
+            content.addView(curtain, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            mShortsCurtain = curtain;
+        } else if (!show && mShortsCurtain != null) {
+            View curtain = mShortsCurtain;
+            mShortsCurtain = null;
+            curtain.postDelayed(() -> {
+                if (curtain.getParent() instanceof ViewGroup) {
+                    ((ViewGroup) curtain.getParent()).removeView(curtain);
+                }
+            }, 600); // the player is opening over it by then
+        }
+    }
+
+    /** The first way: SmartTube's Shorts section loads on Home, its first Short opens */
+    private void playShortsFromSection() {
         BrowseSection shorts = sectionById(MediaGroup.TYPE_SHORTS);
         if (shorts == null) {
             return;

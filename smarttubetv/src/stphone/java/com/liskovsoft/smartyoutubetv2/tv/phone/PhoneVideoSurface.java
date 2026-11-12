@@ -20,6 +20,8 @@ final class PhoneVideoSurface {
     private static final String TAG = "PhoneMiniPlayer";
     private static SurfaceTexture sTexture;
     private static Surface sSurface;
+    /** The view showing the texture now (a texture can only be on screen in one view) */
+    private static java.lang.ref.WeakReference<TextureView> sOwner = new java.lang.ref.WeakReference<>(null);
 
     private PhoneVideoSurface() {
     }
@@ -45,8 +47,14 @@ final class PhoneVideoSurface {
 
     /** The player's video view showed its first texture: from now on it's the one for the whole run */
     static Surface adopt(SurfaceTexture texture) {
+        return adopt(texture, null);
+    }
+
+    /** Also when the shared texture is held by a screen that's going away: the new player starts a texture of its own */
+    static Surface adopt(SurfaceTexture texture, TextureView owner) {
         sTexture = texture;
         sSurface = new Surface(texture);
+        sOwner = new java.lang.ref.WeakReference<>(owner);
         Log.d(TAG, "video texture adopted");
         return sSurface;
     }
@@ -61,10 +69,19 @@ final class PhoneVideoSurface {
             return false;
         }
         if (view.getSurfaceTexture() == texture) {
+            sOwner = new java.lang.ref.WeakReference<>(view);
             return true;
+        }
+        TextureView owner = sOwner.get();
+        if (owner != null && owner != view && owner.isAttachedToWindow() && owner.getSurfaceTexture() == texture) {
+            // Still on screen in another view (e.g. the previous player screen, not gone yet): taking it now would leave
+            // this view blank
+            Log.d(TAG, "video texture busy in another view");
+            return false;
         }
         try {
             view.setSurfaceTexture(texture); // releases the view's own (throwaway) texture
+            sOwner = new java.lang.ref.WeakReference<>(view);
             return true;
         } catch (RuntimeException e) {
             Log.d(TAG, "video texture not shown: " + e);
