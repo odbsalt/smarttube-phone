@@ -95,6 +95,7 @@ public abstract class PhoneActivity extends MotherActivity {
             return;
         }
         mPipState = state;
+        android.util.Log.d("PhoneMiniPlayer", "host pip params: " + state);
         try {
             setPictureInPictureParams(miniPlayerPipParams(wanted, card));
         } catch (RuntimeException e) {

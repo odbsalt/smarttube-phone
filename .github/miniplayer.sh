@@ -141,11 +141,17 @@ echo "play button at: $XY"
 if [ -n "$XY" ]; then adb shell input tap $XY; fi
 sleep 2
 shot 12_card_before_leaving
+# A real home screen to go to (the launcher is off for the steps above)
+adb shell pm enable com.google.android.apps.nexuslauncher
+sleep 8
+echo "== pip params before leaving"
+adb shell dumpsys activity activities | grep -iE "pictureInPictureArgs|supportsPictureInPicture" | head -6
 adb shell input keyevent KEYCODE_HOME
-sleep 5
+sleep 6
 shot 13_left_app
 echo "== pip"
-adb shell dumpsys activity activities | grep -E "mode=pinned|windowingMode=pinned|mPictureInPicture|isInPictureInPictureMode" | head -6
+adb shell dumpsys activity activities | grep -iE "mode=pinned|windowingMode=pinned|isInPictureInPictureMode|pinned" | head -6
+adb logcat -d | grep -iE "PhoneMiniPlayer: (host|player) pip|PictureInPicture|enterPip|autoEnter" | tail -20
 adb shell am start -n "$PKG/$SPLASH"
 sleep 6
 shot 14_back_in_app

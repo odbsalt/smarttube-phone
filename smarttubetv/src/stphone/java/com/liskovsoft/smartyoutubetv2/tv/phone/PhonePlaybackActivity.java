@@ -1509,6 +1509,7 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
             return;
         }
         mPipState = state;
+        android.util.Log.d("PhoneMiniPlayer", "player pip params: " + state);
         try {
             android.app.PictureInPictureParams.Builder builder = new android.app.PictureInPictureParams.Builder()
                     .setAspectRatio(mShortsMode ? new android.util.Rational(9, 16) : new android.util.Rational(16, 9));
