@@ -58,8 +58,17 @@ final class PhoneNewVideos {
     private static final String CHANNEL = "new_videos";
     private static final String GROUP = "org.smarttube.phone.NEW_VIDEOS";
     private static final int SUMMARY_ID = 5200;
-    private static final long CHECK_EVERY_HOURS = 2;
-    private static final int MAX_SEEN = 400;
+    private static final long CHECK_EVERY_MINUTES = 60;
+    private static final String WORK_NAME_V2 = "phone_new_videos_v2";
+    private static final int MAX_SEEN = 3000;
+    private static final String KEY_LAST_CHECK = "last_check";
+    private static final String KEY_CHANNELS = "channels";
+    private static final String KEY_CHANNELS_AT = "channels_at";
+    private static final long CHANNELS_MAX_AGE_MS = 12 * 60 * 60 * 1000L;
+    private static final long RECENT_MARGIN_MS = 60 * 60 * 1000L;
+    private static final long MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000L;
+    /** Channel feeds fetched together (SmartTube's RSS reader takes up to 100) */
+    private static final int RSS_CHUNK = 50;
     private static final int MAX_INBOX = 100;
     /** More new videos than this in one check: the rest are on the Notifications tab only */
     private static final int MAX_POSTED = 4;
@@ -91,15 +100,27 @@ final class PhoneNewVideos {
     static void schedule(Context context) {
         try {
             WorkManager manager = WorkManager.getInstance(context.getApplicationContext());
+            manager.cancelUniqueWork(WORK_NAME); // the first version (every 2 hours, account feed)
             if (!isEnabled(context)) {
-                manager.cancelUniqueWork(WORK_NAME);
+                manager.cancelUniqueWork(WORK_NAME_V2);
                 return;
             }
             Constraints constraints = new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build();
-            PeriodicWorkRequest request = new PeriodicWorkRequest.Builder(CheckWorker.class, CHECK_EVERY_HOURS, TimeUnit.HOURS)
+            PeriodicWorkRequest request = new PeriodicWorkRequest.Builder(CheckWorker.class, CHECK_EVERY_MINUTES, TimeUnit.MINUTES)
                     .setConstraints(constraints)
                     .build();
-            manager.enqueueUniquePeriodicWork(WORK_NAME, ExistingPeriodicWorkPolicy.KEEP, request);
+            manager.enqueueUniquePeriodicWork(WORK_NAME_V2, ExistingPeriodicWorkPolicy.KEEP, request);
+            // The background check reads the channels' feeds: remember the channels while the account is at hand
+            Context app = context.getApplicationContext();
+            com.liskovsoft.sharedutils.rx.RxHelper.runAsync(() -> {
+                try {
+                    if (YouTubeServiceManager.instance().getSignInService().isSigned()) {
+                        refreshChannels(app, false);
+                    }
+                } catch (Throwable e) {
+                    Log.e(TAG, "channels: " + e);
+                }
+            });
         } catch (RuntimeException e) {
             Log.e(TAG, "schedule: " + e); // no WorkManager on this device: the tab still fills while the app is open
         }
@@ -141,14 +162,16 @@ final class PhoneNewVideos {
      */
     static synchronized int check(Context context) {
         Context app = context.getApplicationContext();
-        if (!isEnabled(app) || !YouTubeServiceManager.instance().getSignInService().isSigned()) {
+        if (!isEnabled(app)) {
             return 0;
         }
-        MediaGroup feed = YouTubeServiceManager.instance().getContentService().getSubscriptions();
-        List<MediaItem> items = feed != null ? feed.getMediaItems() : null;
-        if (items == null || items.isEmpty()) {
+        List<MediaItem> items = latestUploads(app);
+        Log.d(TAG, "latest uploads: " + items.size());
+        if (items.isEmpty()) {
             return 0;
         }
+        long now = System.currentTimeMillis();
+        long lastCheck = prefs(app).getLong(KEY_LAST_CHECK, now);
 
         SharedPreferences prefs = prefs(app);
         Set<String> seen = new LinkedHashSet<>();
@@ -167,8 +190,11 @@ final class PhoneNewVideos {
                 continue;
             }
             current.add(id);
-            // Videos and live streams; Shorts and not yet started premieres would mostly be noise
-            if (!seen.contains(id) && !item.isShorts() && !item.isUpcoming()) {
+            // Videos and live streams; Shorts and not yet started premieres would mostly be noise. Only what came out
+            // since the last look (a channel subscribed to meanwhile doesn't bring its older videos).
+            long published = item.getPublishedDate();
+            boolean recent = published <= 0 || (published > lastCheck - RECENT_MARGIN_MS && published > now - MAX_AGE_MS);
+            if (!seen.contains(id) && recent && !item.isShorts() && !item.isUpcoming()) {
                 fresh.add(Video.from(item));
             }
         }
@@ -185,12 +211,12 @@ final class PhoneNewVideos {
             joined.append(joined.length() > 0 ? "," : "").append(id);
         }
         boolean seeded = prefs.getBoolean(KEY_SEEDED, false);
-        prefs.edit().putString(KEY_SEEN, joined.toString()).putBoolean(KEY_SEEDED, true).apply();
+        prefs.edit().putString(KEY_SEEN, joined.toString()).putBoolean(KEY_SEEDED, true).putLong(KEY_LAST_CHECK, now).apply();
+        Log.d(TAG, "new: " + fresh.size() + (seeded ? "" : " (first look: only remembered)"));
         if (!seeded || fresh.isEmpty()) {
             return 0;
         }
 
-        long now = System.currentTimeMillis();
         try {
             JSONArray inbox = new JSONArray();
             for (Video video : fresh) {
@@ -206,6 +232,72 @@ final class PhoneNewVideos {
         }
         post(app, fresh);
         return fresh.size();
+    }
+
+    /**
+     * The latest uploads of the subscribed channels, as Flow does it: each channel's public feed (RSS), which needs no
+     * sign-in, so it also works when Android wakes the app in the background. The channel list is taken from the
+     * account while the app is open; without one yet, the account's Subscriptions feed.
+     */
+    private static List<MediaItem> latestUploads(Context app) {
+        boolean signedIn = false;
+        try {
+            signedIn = YouTubeServiceManager.instance().getSignInService().isSigned();
+            if (signedIn) {
+                refreshChannels(app, false);
+            }
+        } catch (Throwable e) {
+            Log.e(TAG, "channels: " + e);
+        }
+        List<MediaItem> items = new ArrayList<>();
+        String[] channels = channels(app);
+        if (channels.length > 0) {
+            for (int from = 0; from < channels.length; from += RSS_CHUNK) {
+                String[] chunk = java.util.Arrays.copyOfRange(channels, from, Math.min(channels.length, from + RSS_CHUNK));
+                try {
+                    MediaGroup group = YouTubeServiceManager.instance().getContentService().getRssFeed(chunk);
+                    if (group != null && group.getMediaItems() != null) {
+                        items.addAll(group.getMediaItems());
+                    }
+                } catch (Throwable e) {
+                    Log.e(TAG, "rss: " + e); // the other channels still count
+                }
+            }
+        } else if (signedIn) {
+            MediaGroup feed = YouTubeServiceManager.instance().getContentService().getSubscriptions();
+            if (feed != null && feed.getMediaItems() != null) {
+                items.addAll(feed.getMediaItems());
+            }
+        }
+        java.util.Collections.sort(items, (a, b) -> Long.compare(b.getPublishedDate(), a.getPublishedDate()));
+        return items;
+    }
+
+    /** Remembers the subscribed channels (the account is only at hand in the app): at most twice a day, or now */
+    static void refreshChannels(Context context, boolean force) {
+        SharedPreferences prefs = prefs(context);
+        long age = System.currentTimeMillis() - prefs.getLong(KEY_CHANNELS_AT, 0);
+        if (!force && age < CHANNELS_MAX_AGE_MS && !TextUtils.isEmpty(prefs.getString(KEY_CHANNELS, ""))) {
+            return;
+        }
+        MediaGroup group = YouTubeServiceManager.instance().getContentService().getSubscribedChannels();
+        List<MediaItem> items = group != null ? group.getMediaItems() : null;
+        if (items == null || items.isEmpty()) {
+            return;
+        }
+        Set<String> ids = new LinkedHashSet<>();
+        for (MediaItem item : items) {
+            if (item != null && !TextUtils.isEmpty(item.getChannelId())) {
+                ids.add(item.getChannelId());
+            }
+        }
+        prefs.edit().putString(KEY_CHANNELS, TextUtils.join(",", ids)).putLong(KEY_CHANNELS_AT, System.currentTimeMillis()).apply();
+        Log.d(TAG, "channels: " + ids.size());
+    }
+
+    private static String[] channels(Context context) {
+        String stored = prefs(context).getString(KEY_CHANNELS, "");
+        return TextUtils.isEmpty(stored) ? new String[0] : stored.split(",");
     }
 
     private static void post(Context context, List<Video> fresh) {
