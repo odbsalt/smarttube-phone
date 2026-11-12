@@ -56,6 +56,9 @@ public abstract class PhoneActivity extends MotherActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (leaveFloatingWindow()) {
+            return;
+        }
         PhoneTheme.apply(this);
         PhoneUi.applyPhoneDensity(this); // MotherActivity re-applies the TV density on resume
         // MotherActivity may switch to immersive mode (TV fullscreen setting). Phones keep their bars.
@@ -77,6 +80,27 @@ public abstract class PhoneActivity extends MotherActivity {
     protected void onStop() {
         super.onStop();
         PhoneMiniPlayer.onHostStopped(this);
+    }
+
+    /**
+     * Only the player belongs in Android's floating window. A screen started from a player that is in it lands in the
+     * floating window's task (the whole app shrunk into the corner): it closes itself straight away.
+     */
+    private boolean leaveFloatingWindow() {
+        if (Build.VERSION.SDK_INT >= 24 && isInPictureInPictureMode() && !isFinishing()) {
+            android.util.Log.d("PhonePip", getClass().getSimpleName() + " in the floating window: closed");
+            finish();
+            return true;
+        }
+        return false;
+    }
+
+    @Override
+    public void onPictureInPictureModeChanged(boolean inPip, android.content.res.Configuration newConfig) {
+        super.onPictureInPictureModeChanged(inPip, newConfig);
+        if (inPip) {
+            leaveFloatingWindow();
+        }
     }
 
     /** Shows the mini player card while a video plays in it (not on full screen pages like sign in or updates) */
