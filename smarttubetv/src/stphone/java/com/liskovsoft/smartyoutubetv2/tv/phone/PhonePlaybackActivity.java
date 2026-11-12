@@ -248,6 +248,7 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
         super.onResume();
         mResumed = true;
         mPipEnterPending = false;
+        mAppLeaving = false;
         backFromMiniPlayer();
         moveBackToHomeTaskIfNeeded();
         allowLockScreen();
@@ -574,7 +575,8 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
      * player, not Shorts) and a video plays.
      */
     private boolean canEnterPip() {
-        return Build.VERSION.SDK_INT >= 26 && mResumed && !isFinishing() && !mShortsMode && !mMinimized && !mMinimizing
+        return Build.VERSION.SDK_INT >= 26 && mResumed && !isFinishing() && !mAppLeaving && !mShortsMode
+                && !isShort(currentVideo()) && !mMinimized && !mMinimizing
                 && !mShrinkDragging && mPlayer != null && mPlayer.getPlayWhenReady() && pipOnLeave(this)
                 && !(Build.VERSION.SDK_INT >= 24 && isInPictureInPictureMode())
                 && getPackageManager().hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE);
@@ -620,7 +622,10 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
                 android.graphics.drawable.Icon.createWithResource(this, playing ? R.drawable.ic_phone_pause : R.drawable.ic_phone_play),
                 label, label, toggle)));
         if (Build.VERSION.SDK_INT >= 31) {
-            builder.setAutoEnterEnabled(auto);
+            // Never on its own: Android's automatic entry also fires when the app itself opens another screen (Home for
+            // the mini player, the share sheet, a channel...), which put the whole app into the floating window.
+            // The window opens only from onUserLeaveHint, when the user really leaves the app.
+            builder.setAutoEnterEnabled(false);
             builder.setSeamlessResizeEnabled(false); // a cross-fade instead of half drawn frames while resizing
         }
         return builder.build();
@@ -643,15 +648,30 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
         return new android.util.Rational(format.width, format.height);
     }
 
-    /** Home pressed or the app switched (Android 8 to 11; 12+ enters on its own from the parameters above) */
+    /**
+     * Set while this screen opens another one itself (Home for the mini player, a channel, comments, the share
+     * sheet...): Android reports that as the user leaving too, and it must not open the floating window.
+     */
+    private boolean mAppLeaving;
+    private final Runnable mClearAppLeaving = () -> mAppLeaving = false;
+
+    @Override
+    public void startActivityForResult(android.content.Intent intent, int requestCode, Bundle options) {
+        mAppLeaving = true;
+        mHandler.removeCallbacks(mClearAppLeaving);
+        mHandler.postDelayed(mClearAppLeaving, 1500);
+        super.startActivityForResult(intent, requestCode, options);
+    }
+
+    /** Home pressed or the app switched away from: the floating window (regular videos only, never Shorts) */
     @Override
     public void onUserLeaveHint() {
         if (!pipOnLeave(this)) {
             super.onUserLeaveHint(); // SmartTube's background modes (sound only, ...)
             return;
         }
-        if (getViewManager().isNewViewPending()) {
-            return; // one of the app's own screens is opening
+        if (mAppLeaving || getViewManager().isNewViewPending()) {
+            return; // one of the app's own screens is opening: not leaving the app
         }
         if (canEnterPip()) {
             enterPip();

@@ -178,9 +178,11 @@ public class PhonePlaybackFragment extends PlaybackFragment {
             @Override
             public void onSurfaceTextureAvailable(android.graphics.SurfaceTexture texture, int width, int height) {
                 if (PhoneVideoSurface.texture() == null) {
-                    deliverSurface(PhoneVideoSurface.adopt(texture));
-                } else if (!PhoneVideoSurface.isShared(texture)) {
-                    PhoneVideoSurface.showIn(mVideoView); // back from the background or the mini player
+                    deliverSurface(PhoneVideoSurface.adopt(texture, mVideoView));
+                } else if (!PhoneVideoSurface.isShared(texture) && !PhoneVideoSurface.showIn(mVideoView)) {
+                    // The shared texture is still on another (closing) player screen: this player gets its own, and
+                    // it becomes the shared one
+                    deliverSurface(PhoneVideoSurface.adopt(texture, mVideoView));
                 }
             }
 
