@@ -460,8 +460,19 @@ final class PhoneMiniPlayer {
         }
 
         /** Remember the frame on screen for whatever shows the video next */
+        /** The shared texture holds a picture of this video (not an empty one: still loading, or it never played) */
+        private boolean hasVideo() {
+            PhonePlaybackActivity player = sPlayer.get();
+            SimpleExoPlayer exo = player != null ? player.exoPlayer() : null;
+            return exo != null && exo.getVideoFormat() != null;
+        }
+
         private void revealVideo() {
             if (mGotFrame || mVideo.getParent() == null) {
+                return;
+            }
+            if (!hasVideo()) {
+                mHandler.postDelayed(this::revealVideo, 300); // the thumbnail stays until the video has a picture
                 return;
             }
             mGotFrame = true;
@@ -571,7 +582,7 @@ final class PhoneMiniPlayer {
 
         @Override
         public void onSurfaceTextureUpdated(SurfaceTexture texture) {
-            if (!mGotFrame) {
+            if (!mGotFrame && (!mShared || hasVideo())) {
                 mGotFrame = true;
                 android.util.Log.d(TAG, "first frame");
                 mStill.animate().alpha(0f).setDuration(120).withEndAction(() -> mStill.setVisibility(View.GONE)).start();
