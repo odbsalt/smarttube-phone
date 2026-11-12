@@ -86,16 +86,16 @@ public class PhoneApplication extends MainApplication {
             prefs.edit().putBoolean("background_pip_undone", true).apply();
         }
 
-        if (!prefs.getBoolean("background_pip_v2", false)) {
-            // Leaving the app while a video plays: the floating window (as in NewTube and the YouTube app). Leaving from
-            // the mini player, Shorts or a paused video keep the sound / stop as before.
+        {
+            // SmartTube's "Picture in picture" background mode (set by builds 94 and 95) also opens the floating window
+            // when the player closes (Back, the back swipe, the end of a video) and then opens Home inside it. The phone
+            // keeps SmartTube on "sound only"; its own picture in picture (leaving the app with Home on a regular video)
+            // is PhonePlaybackActivity.pipOnLeave, a switch in Settings.
             com.liskovsoft.smartyoutubetv2.common.prefs.PlayerData playerData =
                     com.liskovsoft.smartyoutubetv2.common.prefs.PlayerData.instance(this);
-            if (android.os.Build.VERSION.SDK_INT >= 26
-                    && playerData.getBackgroundMode() == com.liskovsoft.smartyoutubetv2.common.app.models.playback.manager.PlayerConstants.BACKGROUND_MODE_SOUND) {
-                playerData.setBackgroundMode(com.liskovsoft.smartyoutubetv2.common.app.models.playback.manager.PlayerConstants.BACKGROUND_MODE_PIP);
+            if (playerData.getBackgroundMode() == com.liskovsoft.smartyoutubetv2.common.app.models.playback.manager.PlayerConstants.BACKGROUND_MODE_PIP) {
+                playerData.setBackgroundMode(com.liskovsoft.smartyoutubetv2.common.app.models.playback.manager.PlayerConstants.BACKGROUND_MODE_SOUND);
             }
-            prefs.edit().putBoolean("background_pip_v2", true).putBoolean("background_pip_undone", true).apply();
         }
 
         {

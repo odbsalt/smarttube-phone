@@ -565,9 +565,13 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
     private String mPipState;
     private android.content.BroadcastReceiver mPipReceiver;
 
-    private static boolean pipOnLeave(android.content.Context context) {
-        return com.liskovsoft.smartyoutubetv2.common.prefs.PlayerData.instance(context).getBackgroundMode()
-                == PlayerConstants.BACKGROUND_MODE_PIP;
+    /** Settings > Picture in picture (on by default). SmartTube's own background mode stays "sound only". */
+    static boolean pipOnLeave(android.content.Context context) {
+        return Build.VERSION.SDK_INT >= 26 && context.getSharedPreferences("phone_defaults", MODE_PRIVATE).getBoolean("pip_on_leave", true);
+    }
+
+    static void setPipOnLeave(android.content.Context context, boolean on) {
+        context.getSharedPreferences("phone_defaults", MODE_PRIVATE).edit().putBoolean("pip_on_leave", on).apply();
     }
 
     /**
@@ -666,18 +670,11 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
     /** Home pressed or the app switched away from: the floating window (regular videos only, never Shorts) */
     @Override
     public void onUserLeaveHint() {
-        if (!pipOnLeave(this)) {
-            super.onUserLeaveHint(); // SmartTube's background modes (sound only, ...)
+        if (!mAppLeaving && !getViewManager().isNewViewPending() && canEnterPip()) {
+            enterPip();
             return;
         }
-        if (mAppLeaving || getViewManager().isNewViewPending()) {
-            return; // one of the app's own screens is opening: not leaving the app
-        }
-        if (canEnterPip()) {
-            enterPip();
-        } else if (!mShortsMode && mPlayer != null && mPlayer.getPlayWhenReady() && !isFinishing()) {
-            mPlayer.blockEngine(true); // no floating window here: the sound goes on (notification controls)
-        }
+        super.onUserLeaveHint(); // as before: SmartTube's background mode (sound only)
     }
 
     private void enterPip() {

@@ -1224,6 +1224,10 @@ public class PhoneBrowseActivity extends PhoneActivity implements BrowseView, Fe
 
         items.add(PhoneSetting.header(getString(R.string.phone_settings_playback)));
         addEngineSetting(items, engine, R.string.settings_player);
+        items.add(PhoneSetting.toggle(getString(R.string.phone_pip), PhonePlaybackActivity.pipOnLeave(this), R.drawable.ic_phone_collapse, () -> {
+            PhonePlaybackActivity.setPipOnLeave(this, !PhonePlaybackActivity.pipOnLeave(this));
+            refreshSettingsRows();
+        }));
         addEngineSetting(items, engine, R.string.subtitle_category_title);
         addEngineSetting(items, engine, R.string.content_block_provider);
         addEngineSetting(items, engine, R.string.dearrow_provider);
