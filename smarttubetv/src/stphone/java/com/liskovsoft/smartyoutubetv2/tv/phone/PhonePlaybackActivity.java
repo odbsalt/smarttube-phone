@@ -1254,6 +1254,10 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
     }
 
     private void copyFrame(FrameReady done) {
+        if (mPlayer != null && mPlayer.usesSharedVideo()) {
+            done.accept(mPlayer.videoFrame());
+            return;
+        }
         View surface = mPlayer != null ? mPlayer.getSurfaceView() : null;
         android.util.Log.d("PhoneMiniPlayer", "frame copy from " + (surface != null ? surface.getClass().getSimpleName()
                 + " " + surface.getWidth() + "x" + surface.getHeight() : "nothing"));
@@ -1300,6 +1304,16 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
         Video video = currentVideo();
         mMinimizedVideoId = video != null ? video.videoId : null;
         mMinimized = true;
+        if (mPlayer.usesSharedVideo()) {
+            // The card shows the video's texture from now on: this screen lets go of it (its last frame stays up here)
+            if (still != null && mPoster != null) {
+                mPoster.animate().cancel();
+                mPoster.setImageBitmap(still);
+                mPoster.setAlpha(1f);
+                mPoster.setVisibility(View.VISIBLE);
+            }
+            mPlayer.detachVideo();
+        }
         PhoneMiniPlayer.begin(this, still, aspect);
         mPlayer.blockEngine(true); // keeps playing behind the app
         getViewManager().removeTop(this); // Back on the screen underneath doesn't come back here
@@ -1326,6 +1340,22 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
         Video video = currentVideo();
         boolean sameVideo = video != null && mMinimizedVideoId != null && mMinimizedVideoId.equals(video.videoId);
         com.google.android.exoplayer2.SimpleExoPlayer exo = exoPlayer();
+        if (mPlayer != null && mPlayer.usesSharedVideo()) {
+            // The video's texture comes back to this screen (the decoder kept drawing into it: nothing restarts).
+            // The card's last frame covers the video box until the view has drawn it.
+            if (sameVideo && still != null && mPoster != null) {
+                mPoster.animate().cancel();
+                mPoster.setImageBitmap(still);
+                mPoster.setAlpha(1f);
+                mPoster.setVisibility(View.VISIBLE);
+            }
+            // Whatever covers the video box now (this frame, or the one left at the hand-off) lifts at the first frame
+            mPosterUntilFrame = mPoster != null && mPoster.getVisibility() == View.VISIBLE;
+            PhoneMiniPlayer.letGoOfVideo(); // came back from a notification or recents: the card may still show it
+            mPlayer.reattachVideo(this::uncoverVideo);
+            mHandler.postDelayed(this::uncoverVideo, 250); // paused: no new frame comes, the texture has the last one
+            return;
+        }
         if (!sameVideo || still == null || mPoster == null || exo == null) {
             return; // another video: its thumbnail shows until it plays
         }

@@ -144,12 +144,115 @@ public class PhonePlaybackFragment extends PlaybackFragment {
         }
     }
 
+    // region The video's picture: the one shared texture (see PhoneVideoSurface)
+
+    private android.view.TextureView mVideoView;
+    private android.view.ViewGroup mVideoParent;
+    private android.view.SurfaceHolder.Callback mSurfaceCallback;
+    /** Called when the video view shows a new frame (the mini player hand-off waits for one) */
+    private Runnable mOnVideoFrame;
+
+    @Override
+    public android.view.View onCreateView(android.view.LayoutInflater inflater, android.view.ViewGroup container,
+            android.os.Bundle savedInstanceState) {
+        android.view.View root = super.onCreateView(inflater, container, savedInstanceState);
+        installVideoView(root);
+        return root;
+    }
+
+    /**
+     * SmartTube's video view (a SurfaceView) is swapped for a TextureView that shows the shared texture. The player
+     * gets that texture's Surface once and keeps it: moving the picture to the mini player and back only moves the
+     * texture between views.
+     */
+    private void installVideoView(android.view.View root) {
+        android.view.ViewGroup surfaceRoot = root != null ? root.findViewById(com.liskovsoft.smartyoutubetv2.tv.R.id.surface_root) : null;
+        android.view.View original = getSurfaceView();
+        if (surfaceRoot == null || original == null || original.getParent() != surfaceRoot) {
+            return; // SmartTube's own surface then
+        }
+        surfaceRoot.removeView(original);
+        mVideoParent = surfaceRoot;
+        mVideoView = new android.view.TextureView(root.getContext());
+        mVideoView.setSurfaceTextureListener(new PhoneVideoSurface.Listener() {
+            @Override
+            public void onSurfaceTextureAvailable(android.graphics.SurfaceTexture texture, int width, int height) {
+                if (PhoneVideoSurface.texture() == null) {
+                    deliverSurface(PhoneVideoSurface.adopt(texture));
+                } else if (!PhoneVideoSurface.isShared(texture)) {
+                    PhoneVideoSurface.showIn(mVideoView); // back from the background or the mini player
+                }
+            }
+
+            @Override
+            public void onSurfaceTextureUpdated(android.graphics.SurfaceTexture texture) {
+                Runnable onFrame = mOnVideoFrame;
+                if (onFrame != null) {
+                    mOnVideoFrame = null;
+                    onFrame.run();
+                }
+            }
+        });
+        // Before it's on screen: the view uses the shared texture right away, no throwaway one
+        PhoneVideoSurface.showIn(mVideoView);
+        surfaceRoot.addView(mVideoView, 0, new android.widget.FrameLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.Gravity.CENTER));
+        deliverSurface(PhoneVideoSurface.surface()); // a texture from an earlier player screen: the player gets it now
+    }
+
+    private void deliverSurface(android.view.Surface surface) {
+        if (mSurfaceCallback != null && surface != null) {
+            mSurfaceCallback.surfaceCreated(new com.liskovsoft.smartyoutubetv2.tv.ui.playback.mod.surface.TextureViewSurfaceHolder(surface));
+        }
+    }
+
+    /** True when the picture is the shared texture (the mini player shows it too) */
+    public boolean usesSharedVideo() {
+        return mVideoView != null && PhoneVideoSurface.texture() != null;
+    }
+
+    /** The player screen goes behind the mini player: its view lets go of the texture so the card can show it */
+    public void detachVideo() {
+        if (mVideoView != null && mVideoView.getParent() != null) {
+            mVideoParent.removeView(mVideoView);
+        }
+    }
+
+    /** Back from the mini player: the texture comes back here; onFrame runs at the first frame drawn (or soon after) */
+    public void reattachVideo(Runnable onFrame) {
+        if (mVideoView == null || mVideoParent == null) {
+            return;
+        }
+        mOnVideoFrame = onFrame;
+        if (mVideoView.getParent() == null) {
+            PhoneVideoSurface.showIn(mVideoView);
+            mVideoParent.addView(mVideoView, 0, new android.widget.FrameLayout.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.Gravity.CENTER));
+        }
+    }
+
+    /** The video's picture as it is now (for the mini player's first moment) */
+    public android.graphics.Bitmap videoFrame() {
+        return mVideoView != null && mVideoView.isAvailable() ? mVideoView.getBitmap() : null;
+    }
+
+    // endregion
+
     /**
      * The player's own surface goes away when the player screen goes behind the mini player card. The card's surface
      * shows the video by then: don't take the video off it.
      */
     @Override
     public void setSurfaceHolderCallback(android.view.SurfaceHolder.Callback callback) {
+        mSurfaceCallback = callback; // also before the view exists: installVideoView hands it the surface then
+        if (mVideoView != null) {
+            // The shared texture's Surface, for good: never taken back (the decoder keeps drawing into it)
+            mSurfaceCallback = callback;
+            deliverSurface(PhoneVideoSurface.surface());
+            return;
+        }
         super.setSurfaceHolderCallback(callback == null ? null : new android.view.SurfaceHolder.Callback() {
             @Override
             public void surfaceCreated(android.view.SurfaceHolder holder) {
