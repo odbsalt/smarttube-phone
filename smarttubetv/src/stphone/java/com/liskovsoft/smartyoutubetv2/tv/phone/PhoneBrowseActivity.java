@@ -398,6 +398,12 @@ public class PhoneBrowseActivity extends PhoneActivity implements BrowseView, Fe
 
     private void setupTopBar() {
         findViewById(R.id.phone_search).setOnClickListener(v -> SearchPresenter.instance(this).startSearch(null));
+        findViewById(R.id.phone_settings_button).setOnClickListener(v -> {
+            BrowseSection settings = sectionById(MediaGroup.TYPE_SETTINGS);
+            if (settings != null) {
+                focusSection(settings);
+            }
+        });
         mTopAvatar = findViewById(R.id.phone_top_avatar);
         mTopAvatar.setOnClickListener(v -> selectTab(TAB_YOU));
         mSignInCard = getLayoutInflater().inflate(R.layout.phone_signin_card, mList, false);
@@ -520,6 +526,8 @@ public class PhoneBrowseActivity extends PhoneActivity implements BrowseView, Fe
                     PhoneNotificationsActivity.open(this); // its own screen, like Shorts
                 } else if (index == TAB_SUBS && mCurrentTab == TAB_SUBS && !isSubscriptionsFeed()) {
                     selectTab(TAB_SUBS); // from All channels back to the feed
+                } else if (index == TAB_YOU && mCurrentTab == TAB_YOU && !mYouDashboard) {
+                    showYouDashboard(); // from History, Settings...: back to the You page
                 } else if (index == mCurrentTab) {
                     scrollToTopOrRefresh();
                 } else {
@@ -573,30 +581,15 @@ public class PhoneBrowseActivity extends PhoneActivity implements BrowseView, Fe
         List<BrowseSection> sections = sectionsOfTab(mCurrentTab);
 
         // The Subscriptions feed has its own channels row and filter chips (All opens the Channels section).
-        // The You page lists its places itself.
-        if ((sections.size() <= 1 && mCurrentTab != TAB_YOU) || isSubscriptionsFeed() || (mCurrentTab == TAB_YOU && mYouDashboard)) {
+        // The You tab has none: its page lists its places, and Back (or the You tab) leads back to it.
+        View settingsButton = findViewById(R.id.phone_settings_button);
+        settingsButton.setVisibility(mCurrentTab == TAB_YOU && sectionById(MediaGroup.TYPE_SETTINGS) != null ? View.VISIBLE : View.GONE);
+        if ((sections.size() <= 1 && mCurrentTab != TAB_YOU) || isSubscriptionsFeed() || mCurrentTab == TAB_YOU) {
             mChipsScroll.setVisibility(View.GONE);
             return;
         }
 
         mChipsScroll.setVisibility(View.VISIBLE);
-
-        if (mCurrentTab == TAB_YOU) {
-            // Inside one of You's sections: a first chip leads back to the You page, the others switch sections
-            TextView back = new TextView(this);
-            back.setText("\u2039");
-            back.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
-            back.setGravity(Gravity.CENTER);
-            back.setPadding(dp(14), 0, dp(14), dp(2));
-            back.setBackgroundResource(R.drawable.phone_chip_bg);
-            back.setTextColor(getResources().getColor(R.color.phone_text));
-            back.setContentDescription(getString(R.string.phone_you_back));
-            back.setOnClickListener(v -> showYouDashboard());
-            LinearLayout.LayoutParams backParams = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(32));
-            backParams.setMarginStart(dp(4));
-            backParams.setMarginEnd(dp(4));
-            mChips.addView(back, backParams);
-        }
 
         for (BrowseSection section : sections) {
             TextView chip = new TextView(this);
@@ -629,31 +622,7 @@ public class PhoneBrowseActivity extends PhoneActivity implements BrowseView, Fe
             if (selected) {
                 chip.post(() -> mChipsScroll.smoothScrollTo(Math.max(0, chip.getLeft() - dp(16)), 0));
             }
-
-            // You: Downloads right after History (videos and audio saved by the app, played in the app)
-            if (mCurrentTab == TAB_YOU && section.getId() == MediaGroup.TYPE_HISTORY) {
-                addDownloadsChip();
-            }
         }
-        if (mCurrentTab == TAB_YOU && sectionById(MediaGroup.TYPE_HISTORY) == null) {
-            addDownloadsChip();
-        }
-    }
-
-    private void addDownloadsChip() {
-        TextView chip = new TextView(this);
-        chip.setText(R.string.phone_downloads);
-        chip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        chip.setGravity(Gravity.CENTER);
-        chip.setPadding(dp(12), 0, dp(12), 0);
-        chip.setBackgroundResource(R.drawable.phone_chip_bg);
-        chip.setTextColor(getResources().getColor(R.color.phone_text));
-        chip.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
-        chip.setOnClickListener(v -> PhoneDownloadsActivity.open(this));
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(32));
-        params.setMarginStart(dp(4));
-        params.setMarginEnd(dp(4));
-        mChips.addView(chip, params);
     }
 
     /**

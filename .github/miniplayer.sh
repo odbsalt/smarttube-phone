@@ -100,9 +100,9 @@ XY=$(center_of_text "You")
 if [ -n "$XY" ]; then adb shell input tap $XY; else adb shell input tap 945 2280; fi
 sleep 6
 shot 7_you
-# The You page lists its places as rows: Settings is one of them
-XY=$(center_of_text "Settings")
-echo "settings row at: $XY"
+# Settings: the gear at the top of the You page
+XY=$(center_of "Settings")
+echo "settings button at: $XY"
 if [ -n "$XY" ]; then
   adb shell input tap $XY
   sleep 4

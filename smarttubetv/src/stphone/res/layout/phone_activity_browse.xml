@@ -84,6 +84,18 @@
                 android:tint="@color/phone_text"
                 android:visibility="gone" />
 
+            <!-- You tab only: Settings, as in the YouTube app -->
+            <ImageView
+                android:id="@+id/phone_settings_button"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:padding="12dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/phone_settings_open"
+                android:src="@drawable/ic_phone_settings"
+                android:tint="@color/phone_text"
+                android:visibility="gone" />
+
             <ImageView
                 android:id="@+id/phone_search"
                 android:layout_width="48dp"
