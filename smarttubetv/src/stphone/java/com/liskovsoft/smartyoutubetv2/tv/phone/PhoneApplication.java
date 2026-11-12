@@ -55,6 +55,12 @@ public class PhoneApplication extends MainApplication {
         if (!tweaks.isDontResizeVideoToFitDialogEnabled()) {
             tweaks.setDontResizeVideoToFitDialogEnabled(true);
         }
+        // SmartTube's TV default: a new video decoder every time the picture moves to another surface (player to mini
+        // player and back). The new decoder waits for the next key frame, so the picture froze for a moment while the
+        // sound went on. Phones (Android 8+) switch the surface of the running decoder instead.
+        if (tweaks.isSetOutputSurfaceWorkaroundEnabled()) {
+            tweaks.setSetOutputSurfaceWorkaroundEnabled(false);
+        }
 
         android.content.SharedPreferences prefs = getSharedPreferences("phone_defaults", MODE_PRIVATE);
         if (!prefs.getBoolean("background_playback_v1", false)) {
