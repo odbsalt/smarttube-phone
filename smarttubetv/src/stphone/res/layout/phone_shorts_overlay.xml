@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Shorts: full screen vertical video. Swipe up/down for next/previous, tap to pause, double tap to like. -->
+<!-- Shorts, laid out like the YouTube app's: the video fills the screen, search and more at the top, the actions down
+     the right side, channel and title at the bottom left, the progress line and the app's tabs under it.
+     Swipe up/down for next/previous, tap to pause, double tap to like. -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/phone_shorts"
     android:layout_width="match_parent"
@@ -8,10 +10,18 @@
 
     <View
         android:layout_width="match_parent"
-        android:layout_height="280dp"
+        android:layout_height="140dp"
+        android:layout_gravity="top"
+        android:background="@drawable/phone_scrim_top" />
+
+    <View
+        android:id="@+id/phone_shorts_scrim"
+        android:layout_width="match_parent"
+        android:layout_height="320dp"
         android:layout_gravity="bottom"
         android:background="@drawable/phone_scrim_bottom" />
 
+    <!-- Kept for the code that wires it; the tabs at the bottom lead out of Shorts now -->
     <ImageView
         android:id="@+id/phone_shorts_back"
         android:layout_width="48dp"
@@ -22,7 +32,39 @@
         android:background="?android:attr/selectableItemBackgroundBorderless"
         android:contentDescription="@string/phone_back"
         android:src="@drawable/ic_phone_back"
-        android:tint="#FFFFFF" />
+        android:tint="#FFFFFF"
+        android:visibility="gone" />
+
+    <LinearLayout
+        android:id="@+id/phone_shorts_top"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="6dp"
+        android:layout_marginEnd="6dp"
+        android:orientation="horizontal">
+
+        <ImageView
+            android:id="@+id/phone_shorts_search"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:padding="11dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/phone_search_hint"
+            android:src="@drawable/ic_phone_search"
+            android:tint="#FFFFFF" />
+
+        <ImageView
+            android:id="@+id/phone_shorts_more"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:padding="11dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/phone_more_settings"
+            android:rotation="90"
+            android:src="@drawable/ic_phone_more"
+            android:tint="#FFFFFF" />
+    </LinearLayout>
 
     <ImageView
         android:id="@+id/phone_shorts_paused"
@@ -37,23 +79,41 @@
         android:tint="#FFFFFF"
         android:visibility="gone" />
 
+    <!-- Right side: the actions, then the channel's picture -->
     <LinearLayout
-        android:id="@+id/phone_shorts_actions"
+        android:id="@+id/phone_shorts_side"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom|end"
-        android:layout_marginEnd="6dp"
-        android:layout_marginBottom="28dp"
+        android:layout_marginEnd="4dp"
         android:gravity="center_horizontal"
-        android:orientation="vertical" />
+        android:orientation="vertical">
+
+        <LinearLayout
+            android:id="@+id/phone_shorts_actions"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center_horizontal"
+            android:orientation="vertical" />
+
+        <ImageView
+            android:id="@+id/phone_shorts_channel_tile"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/phone_shorts_tile"
+            android:contentDescription="@string/phone_channel"
+            android:padding="2dp"
+            android:scaleType="centerCrop" />
+    </LinearLayout>
 
     <LinearLayout
+        android:id="@+id/phone_shorts_info"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom"
-        android:layout_marginStart="14dp"
-        android:layout_marginEnd="84dp"
-        android:layout_marginBottom="30dp"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="80dp"
         android:orientation="vertical">
 
         <LinearLayout
@@ -65,8 +125,8 @@
 
             <ImageView
                 android:id="@+id/phone_shorts_avatar"
-                android:layout_width="36dp"
-                android:layout_height="36dp"
+                android:layout_width="34dp"
+                android:layout_height="34dp"
                 android:importantForAccessibility="no" />
 
             <TextView
@@ -77,7 +137,7 @@
                 android:ellipsize="end"
                 android:fontFamily="sans-serif-medium"
                 android:maxLines="1"
-                android:maxWidth="180dp"
+                android:maxWidth="170dp"
                 android:shadowColor="#99000000"
                 android:shadowRadius="4"
                 android:textColor="#FFFFFF"
@@ -111,4 +171,27 @@
             android:textColor="#FFFFFF"
             android:textSize="15sp" />
     </LinearLayout>
+
+    <!-- The progress line with its red dot, right above the tabs; drag it to move through the Short -->
+    <SeekBar
+        android:id="@+id/phone_shorts_seek"
+        android:layout_width="match_parent"
+        android:layout_height="18dp"
+        android:layout_gravity="bottom"
+        android:max="1000"
+        android:paddingStart="0dp"
+        android:paddingEnd="0dp"
+        android:progressBackgroundTint="#55FFFFFF"
+        android:progressTint="@color/phone_accent"
+        android:splitTrack="false"
+        android:thumb="@drawable/phone_shorts_thumb" />
+
+    <!-- The app's tabs, Shorts chosen (filled in the code) -->
+    <LinearLayout
+        android:id="@+id/phone_shorts_tabs"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:background="#000000"
+        android:orientation="horizontal" />
 </FrameLayout>

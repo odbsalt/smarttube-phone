@@ -129,6 +129,22 @@ public class PhoneBrowseActivity extends PhoneActivity implements BrowseView, Fe
             com.liskovsoft.smartyoutubetv2.common.app.presenters.SearchPresenter.instance(this).startSearch(null);
             return;
         }
+        // A tab tapped on the Shorts screen
+        if ("tab_home".equals(shortcut) || "tab_you".equals(shortcut) || "tab_notifications".equals(shortcut)) {
+            if (mSections.isEmpty()) {
+                if (attempt < 20) {
+                    mList.postDelayed(() -> handleShortcut(intent, attempt + 1), 250);
+                }
+                return;
+            }
+            intent.removeExtra(EXTRA_SHORTCUT);
+            if ("tab_notifications".equals(shortcut)) {
+                PhoneNotificationsActivity.open(this);
+            } else {
+                selectTab("tab_you".equals(shortcut) ? TAB_YOU : TAB_HOME);
+            }
+            return;
+        }
         int sectionId = "shorts".equals(shortcut) ? MediaGroup.TYPE_SHORTS
                 : "history".equals(shortcut) ? MediaGroup.TYPE_HISTORY : MediaGroup.TYPE_SUBSCRIPTIONS;
         BrowseSection section = sectionById(sectionId);
