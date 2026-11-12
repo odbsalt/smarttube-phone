@@ -1807,7 +1807,7 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
         });
         mFullscreenButton.setOnClickListener(v -> toggleFullscreen());
         findViewById(R.id.phone_ctl_collapse).setOnClickListener(v -> onBackPressed());
-        findViewById(R.id.phone_ctl_settings).setOnClickListener(v -> clickButton(R.id.lb_control_high_quality));
+        findViewById(R.id.phone_ctl_settings).setOnClickListener(v -> openPlayerSheet());
         findViewById(R.id.phone_ctl_cc).setOnClickListener(v -> clickButton(R.id.lb_control_closed_captioning));
         findViewById(R.id.phone_ctl_speed).setOnClickListener(v -> openSpeedMenu());
         findViewById(R.id.phone_ctl_autoplay).setOnClickListener(v -> toggleAutoplay());
@@ -2666,6 +2666,46 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
     }
 
     // endregion
+
+    /** The gear: Quality, Playback speed, Captions, More settings (see PhonePlayerSheet) */
+    private void openPlayerSheet() {
+        if (mPlayer == null) {
+            return;
+        }
+        mHandler.removeCallbacks(mAutoHide);
+        PhonePlayerSheet.show(this, new PhonePlayerSheet.Host() {
+            @Override
+            public PhonePlaybackFragment player() {
+                return mPlayer;
+            }
+
+            @Override
+            public String playingQuality() {
+                com.google.android.exoplayer2.SimpleExoPlayer exo = exoPlayer();
+                com.google.android.exoplayer2.Format format = exo != null ? exo.getVideoFormat() : null;
+                if (format == null || format.height <= 0) {
+                    return null;
+                }
+                int fps = Math.round(format.frameRate);
+                return Math.min(format.width, format.height) + "p" + (fps >= 48 ? String.valueOf(fps) : "");
+            }
+
+            @Override
+            public void openSpeed() {
+                openSpeedMenu();
+            }
+
+            @Override
+            public void openCaptions() {
+                clickButton(R.id.lb_control_closed_captioning);
+            }
+
+            @Override
+            public void openMoreSettings() {
+                clickButton(R.id.lb_control_high_quality);
+            }
+        });
+    }
 
     private void clickButton(int buttonId) {
         if (buttonId == R.id.action_thumbs_up || buttonId == R.id.action_thumbs_down || buttonId == R.id.action_subscribe) {
