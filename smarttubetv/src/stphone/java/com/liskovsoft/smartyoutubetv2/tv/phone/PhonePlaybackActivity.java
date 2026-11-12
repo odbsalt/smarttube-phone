@@ -619,10 +619,11 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
         }
         builder.setActions(java.util.Collections.singletonList(playPauseAction()));
         if (Build.VERSION.SDK_INT >= 31) {
-            // Never on its own: Android's automatic entry also fires when the app itself opens another screen (Home for
-            // the mini player, the share sheet, a channel...), which put the whole app into the floating window.
-            // The window opens only from onUserLeaveHint, when the user really leaves the app.
-            builder.setAutoEnterEnabled(false);
+            // Android 12+: the floating window opens on its own when the user leaves the app (newer Android versions
+            // no longer honour entering it from onUserLeaveHint with gesture navigation). Armed only while a regular
+            // video plays on the full player, and disarmed before any screen the app opens itself (see
+            // startActivityForResult and the launch flags in PhoneApplication), so in-app screen changes never open it.
+            builder.setAutoEnterEnabled(auto);
             builder.setSeamlessResizeEnabled(false); // a cross-fade instead of half drawn frames while resizing
         }
         return builder.build();
@@ -670,13 +671,19 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
         mAppLeaving = true;
         mHandler.removeCallbacks(mClearAppLeaving);
         mHandler.postDelayed(mClearAppLeaving, 1500);
+        updatePipParams(); // disarms the automatic floating window before Android moves this screen back
+        if (intent != null) {
+            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NO_USER_ACTION);
+        }
         super.startActivityForResult(intent, requestCode, options);
     }
 
     /** Home pressed or the app switched away from: the floating window (regular videos only, never Shorts) */
     @Override
     public void onUserLeaveHint() {
-        if (!mAppLeaving && !getViewManager().isNewViewPending() && canEnterPip() && enterFloatingWindow()) {
+        // Android 12+ opens the window itself (automatic entry, armed in updatePipParams); older versions from here
+        if (Build.VERSION.SDK_INT < 31 && !mAppLeaving && !getViewManager().isNewViewPending() && canEnterPip()
+                && enterFloatingWindow()) {
             return;
         }
         super.onUserLeaveHint(); // as before: SmartTube's background mode (sound only)
@@ -1474,6 +1481,7 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
         Video video = currentVideo();
         mMinimizedVideoId = video != null ? video.videoId : null;
         mMinimized = true;
+        updatePipParams(); // not into the floating window on the way to the mini player
         if (mPlayer.usesSharedVideo()) {
             // The card shows the video's texture from now on: this screen lets go of it (its last frame stays up here)
             if (still != null && mPoster != null) {
@@ -2100,6 +2108,9 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
 
     private boolean handleShortsTouch(MotionEvent event) {
         if (mPageAnimating) {
+            if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                android.util.Log.d("PhoneShorts", "touch ignored: page still animating");
+            }
             return true;
         }
         switch (event.getActionMasked()) {
@@ -2110,20 +2121,29 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
                     mVelocity.recycle();
                 }
                 mVelocity = android.view.VelocityTracker.obtain();
-                mVelocity.addMovement(event);
+                trackPageVelocity(event);
                 return true;
             case MotionEvent.ACTION_MOVE: {
-                if (mVelocity != null) {
-                    mVelocity.addMovement(event);
-                }
+                trackPageVelocity(event);
                 float dy = event.getRawY() - mPageStartY;
                 if (!mPaging && Math.abs(dy) > android.view.ViewConfiguration.get(this).getScaledTouchSlop()) {
                     mPaging = true;
                     mPageDirection = dy < 0 ? 1 : -1;
                     mIncoming = mPageDirection > 0 ? nextShort() : previousShortInQueue();
+                    Video playing = currentVideo();
+                    android.util.Log.d("PhoneShorts", "swipe " + (mPageDirection > 0 ? "next" : "previous") + " from "
+                            + (playing != null ? playing.videoId : null) + " to " + (mIncoming != null ? mIncoming.videoId : null)
+                            + ", queue " + PhoneShortsQueue.videos().size());
                     preparePage(mIncoming);
                 }
                 if (mPaging) {
+                    if (mIncoming == null && mPageDirection > 0) {
+                        // The next Shorts may have come in meanwhile (the feed loads more while the user swipes)
+                        mIncoming = nextShort();
+                        if (mIncoming != null) {
+                            preparePage(mIncoming);
+                        }
+                    }
                     // Only follow the finger in the chosen direction; rubber band when there is nothing there
                     float offset = mPageDirection > 0 ? Math.min(0, dy) : Math.max(0, dy);
                     if (mIncoming == null) {
@@ -2143,13 +2163,17 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
                     float dy = event.getRawY() - mPageStartY;
                     float velocity = 0;
                     if (mVelocity != null) {
-                        mVelocity.addMovement(event);
+                        trackPageVelocity(event);
                         mVelocity.computeCurrentVelocity(1000);
                         velocity = mVelocity.getYVelocity();
                     }
                     float height = mVideoBox.getHeight();
-                    boolean farEnough = Math.abs(dy) > height * 0.18f || Math.abs(velocity) > 900;
+                    // A short flick is enough (like the YouTube app), or a drag past an eighth of the screen
+                    boolean flicked = mPageDirection > 0 ? velocity < -dp(250) : velocity > dp(250);
+                    boolean farEnough = Math.abs(dy) > height * 0.12f || flicked;
                     boolean rightWay = mPageDirection > 0 ? dy < 0 : dy > 0;
+                    android.util.Log.d("PhoneShorts", "release: moved " + Math.round(dy) + " of " + Math.round(height)
+                            + ", speed " + Math.round(velocity) + (mIncoming == null ? ", nothing to go to" : ""));
                     if (mIncoming != null && farEnough && rightWay) {
                         commitPage(velocity);
                     } else {
@@ -2166,6 +2190,20 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
             default:
                 return true;
         }
+    }
+
+    /**
+     * The finger's speed in screen coordinates: the Shorts overlay moves with the finger while paging, so its own
+     * coordinates barely change and a flick looked like no speed at all (a swipe had to be long and hard).
+     */
+    private void trackPageVelocity(MotionEvent event) {
+        if (mVelocity == null) {
+            return;
+        }
+        MotionEvent onScreen = MotionEvent.obtain(event);
+        onScreen.setLocation(event.getRawX(), event.getRawY());
+        mVelocity.addMovement(onScreen);
+        onScreen.recycle();
     }
 
     private View playerView() {
@@ -2394,6 +2432,7 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
         if (video == null) {
             return;
         }
+        android.util.Log.d("PhoneShorts", "open " + video.videoId);
         presenter().openVideo(video);
         if (PhoneShortsQueue.hasOwnFeed()) {
             PhoneShortsQueue.markPlayed(video); // also loads the next page near the end
