@@ -102,7 +102,6 @@ final class PhonePlayerSheet {
             }
             if (format.isDefault() || format.getHeight() <= 0) {
                 continue; // SmartTube's "default" entry switches the video off (sound only): not a quality
-                continue;
             }
             String label = label(format);
             // One row per resolution (the same one comes in several codecs): the chosen one wins, else the first
