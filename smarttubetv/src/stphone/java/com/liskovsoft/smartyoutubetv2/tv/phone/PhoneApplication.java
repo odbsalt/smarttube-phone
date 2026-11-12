@@ -86,6 +86,18 @@ public class PhoneApplication extends MainApplication {
             prefs.edit().putBoolean("background_pip_undone", true).apply();
         }
 
+        if (!prefs.getBoolean("background_pip_v2", false)) {
+            // Leaving the app while a video plays: the floating window (as in NewTube and the YouTube app). Leaving from
+            // the mini player, Shorts or a paused video keep the sound / stop as before.
+            com.liskovsoft.smartyoutubetv2.common.prefs.PlayerData playerData =
+                    com.liskovsoft.smartyoutubetv2.common.prefs.PlayerData.instance(this);
+            if (android.os.Build.VERSION.SDK_INT >= 26
+                    && playerData.getBackgroundMode() == com.liskovsoft.smartyoutubetv2.common.app.models.playback.manager.PlayerConstants.BACKGROUND_MODE_SOUND) {
+                playerData.setBackgroundMode(com.liskovsoft.smartyoutubetv2.common.app.models.playback.manager.PlayerConstants.BACKGROUND_MODE_PIP);
+            }
+            prefs.edit().putBoolean("background_pip_v2", true).putBoolean("background_pip_undone", true).apply();
+        }
+
         if (!prefs.getBoolean("phone_quality_v1", false)) {
             com.liskovsoft.smartyoutubetv2.common.prefs.PlayerData playerData =
                     com.liskovsoft.smartyoutubetv2.common.prefs.PlayerData.instance(this);

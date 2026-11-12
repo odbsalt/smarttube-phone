@@ -139,6 +139,7 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState); // inflates the phone fragment_playback layout (TV player keeps TV density)
         sInstance = new java.lang.ref.WeakReference<>(this);
+        registerPipReceiver();
         PhoneTheme.apply(this); // details panel follows the Appearance setting
         PhoneUi.applyPhoneDensity(this); // phone views use the phone's real density
 
@@ -245,6 +246,8 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
     @Override
     protected void onResume() {
         super.onResume();
+        mResumed = true;
+        mPipEnterPending = false;
         backFromMiniPlayer();
         moveBackToHomeTaskIfNeeded();
         allowLockScreen();
@@ -256,11 +259,14 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
         mHandler.removeCallbacks(mTicker);
         mHandler.post(mTicker);
         refreshDetails();
+        mPipState = null;
+        updatePipParams(); // Android 12+: arms the automatic floating window for the home gesture
     }
 
     @Override
     protected void onPause() {
         super.onPause();
+        mResumed = false;
         finishPageAnimation();
         mHandler.removeCallbacks(mTicker);
         mHandler.removeCallbacks(mAutoHide);
@@ -292,9 +298,17 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
             mKeptForLock = !mPlayer.isEngineBlocked();
             mPlayer.blockEngine(true);
         }
+        boolean closedPip = mLeftPip && !isChangingConfigurations() && !screenOff;
         super.onStop();
         mStopped = true;
         mLeftPip = false;
+        if (closedPip && mPlayer != null) {
+            // The floating window was swiped away (it left picture in picture and stopped, without coming back): the
+            // video stops, like the YouTube app
+            mPlayer.setPlayWhenReady(false);
+            closePlayer();
+            return;
+        }
         if (mMinimized) {
             // Behind the app now, the mini player shows the video: back to the full layout for the next open
             mMinimizing = false;
@@ -337,6 +351,7 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
         if (sInstance != null && sInstance.get() == this) {
             sInstance = null;
         }
+        unregisterPipReceiver();
         cancelPlaybackNotification();
         if (mPlayPauseReceiver != null) {
             try {
@@ -397,7 +412,14 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
     @Override
     public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode);
+        mPipEnterPending = false;
         if (isInPictureInPictureMode) {
+            if (mPlayer != null) {
+                mPlayer.blockEngine(true); // the floating window plays on while the app is in the background
+            }
+            getViewManager().blockTop(this); // back in the app: this player, not the screen under it
+            mPipState = null;
+            updatePipParams(); // its play/pause button
             showPhoneControls(false);
             // Android animates the floating window out of the video exactly where the drag left it. Moving the video
             // back (or relaying out, or turning the window opaque, which recreates its surface) during that animation
@@ -493,7 +515,9 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
             return;
         }
         mLeftPip = false;
-        if (!isInOwnTask() || isFinishing()) {
+        if (!isInOwnTask() || isFinishing() || mPlayer != null) {
+            // The player keeps playing where it is: closing it and opening the video again would stop the picture
+            // and load everything again. Only a player screen without its player is reopened.
             return;
         }
         Video video = currentVideo();
@@ -527,8 +551,169 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
     }
 
     private boolean isPip() {
-        return Build.VERSION.SDK_INT >= 24 && isInPictureInPictureMode();
+        // From the moment Android accepted the floating window: the screen is already only the video
+        return mPipEnterPending || (Build.VERSION.SDK_INT >= 24 && isInPictureInPictureMode());
     }
+
+    // region Picture in picture when leaving the app (as in NewTube and the YouTube app)
+
+    private static final String ACTION_PIP_TOGGLE = "org.smarttube.phone.PIP_TOGGLE";
+    private boolean mResumed;
+    /** Between Android accepting the floating window and saying it's in it (a few frames) */
+    private boolean mPipEnterPending;
+    private String mPipState;
+    private android.content.BroadcastReceiver mPipReceiver;
+
+    private static boolean pipOnLeave(android.content.Context context) {
+        return com.liskovsoft.smartyoutubetv2.common.prefs.PlayerData.instance(context).getBackgroundMode()
+                == PlayerConstants.BACKGROUND_MODE_PIP;
+    }
+
+    /**
+     * Leaving the app now opens the floating window: the full player is on screen (not on its way to or in the mini
+     * player, not Shorts) and a video plays.
+     */
+    private boolean canEnterPip() {
+        return Build.VERSION.SDK_INT >= 26 && mResumed && !isFinishing() && !mShortsMode && !mMinimized && !mMinimizing
+                && !mShrinkDragging && mPlayer != null && mPlayer.getPlayWhenReady() && pipOnLeave(this)
+                && !(Build.VERSION.SDK_INT >= 24 && isInPictureInPictureMode())
+                && getPackageManager().hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE);
+    }
+
+    /**
+     * Keeps Android told what the floating window looks like (the video's shape, growing out of the video, a play /
+     * pause button) and, on Android 12+, whether to open it on its own when the app is left: Android reads this at
+     * that moment, there is no callback to set it in.
+     */
+    private void updatePipParams() {
+        if (Build.VERSION.SDK_INT < 26 || isFinishing() || isDestroyed()) {
+            return;
+        }
+        boolean auto = canEnterPip();
+        boolean playing = mPlayer != null && mPlayer.getPlayWhenReady();
+        Rect video = isPip() ? null : videoRectOnScreen();
+        String state = auto + " " + playing + " " + pipAspect() + " " + (video != null ? video.flattenToString() : "");
+        if (state.equals(mPipState)) {
+            return;
+        }
+        mPipState = state;
+        try {
+            setPictureInPictureParams(pipParams(auto, video));
+        } catch (RuntimeException e) {
+            android.util.Log.d("PhonePip", "params: " + e); // no picture in picture on this phone
+        }
+    }
+
+    @androidx.annotation.RequiresApi(26)
+    private android.app.PictureInPictureParams pipParams(boolean auto, Rect video) {
+        android.app.PictureInPictureParams.Builder builder = new android.app.PictureInPictureParams.Builder()
+                .setAspectRatio(pipAspect());
+        if (video != null && !video.isEmpty()) {
+            builder.setSourceRectHint(video);
+        }
+        boolean playing = mPlayer != null && mPlayer.getPlayWhenReady();
+        android.app.PendingIntent toggle = android.app.PendingIntent.getBroadcast(this, 4721,
+                new android.content.Intent(ACTION_PIP_TOGGLE).setPackage(getPackageName()),
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE);
+        String label = getString(R.string.phone_mini_play_pause);
+        builder.setActions(java.util.Collections.singletonList(new android.app.RemoteAction(
+                android.graphics.drawable.Icon.createWithResource(this, playing ? R.drawable.ic_phone_pause : R.drawable.ic_phone_play),
+                label, label, toggle)));
+        if (Build.VERSION.SDK_INT >= 31) {
+            builder.setAutoEnterEnabled(auto);
+            builder.setSeamlessResizeEnabled(false); // a cross-fade instead of half drawn frames while resizing
+        }
+        return builder.build();
+    }
+
+    /** The video's own shape, within what Android accepts for the floating window */
+    private android.util.Rational pipAspect() {
+        com.google.android.exoplayer2.SimpleExoPlayer exo = exoPlayer();
+        com.google.android.exoplayer2.Format format = exo != null ? exo.getVideoFormat() : null;
+        if (format == null || format.width <= 0 || format.height <= 0) {
+            return mShortsMode ? new android.util.Rational(9, 16) : new android.util.Rational(16, 9);
+        }
+        float ratio = (float) format.width / format.height;
+        if (ratio < 0.5f) {
+            return new android.util.Rational(1, 2);
+        }
+        if (ratio > 2.3f) {
+            return new android.util.Rational(23, 10);
+        }
+        return new android.util.Rational(format.width, format.height);
+    }
+
+    /** Home pressed or the app switched (Android 8 to 11; 12+ enters on its own from the parameters above) */
+    @Override
+    public void onUserLeaveHint() {
+        if (!pipOnLeave(this)) {
+            super.onUserLeaveHint(); // SmartTube's background modes (sound only, ...)
+            return;
+        }
+        if (getViewManager().isNewViewPending()) {
+            return; // one of the app's own screens is opening
+        }
+        if (canEnterPip()) {
+            enterPip();
+        } else if (!mShortsMode && mPlayer != null && mPlayer.getPlayWhenReady() && !isFinishing()) {
+            mPlayer.blockEngine(true); // no floating window here: the sound goes on (notification controls)
+        }
+    }
+
+    private void enterPip() {
+        if (Build.VERSION.SDK_INT < 26) {
+            return;
+        }
+        // The screen becomes only the video BEFORE Android captures it for the shrinking window, so the page and the
+        // controls don't flash inside the window
+        android.app.PictureInPictureParams params = pipParams(false, videoRectOnScreen());
+        mPipEnterPending = true;
+        showPhoneControls(false);
+        applyLayoutMode();
+        boolean entered;
+        try {
+            entered = enterPictureInPictureMode(params);
+        } catch (RuntimeException e) {
+            entered = false;
+        }
+        if (!entered) {
+            mPipEnterPending = false;
+            applyLayoutMode();
+            if (mPlayer != null && mPlayer.getPlayWhenReady()) {
+                mPlayer.blockEngine(true); // refused: the sound goes on
+            }
+        }
+    }
+
+    private void registerPipReceiver() {
+        if (Build.VERSION.SDK_INT < 26 || mPipReceiver != null) {
+            return;
+        }
+        mPipReceiver = new android.content.BroadcastReceiver() {
+            @Override
+            public void onReceive(android.content.Context context, android.content.Intent intent) {
+                if (mPlayer != null) {
+                    mPlayer.setPlayWhenReady(!mPlayer.getPlayWhenReady());
+                    updatePlayButton();
+                }
+            }
+        };
+        androidx.core.content.ContextCompat.registerReceiver(this, mPipReceiver,
+                new android.content.IntentFilter(ACTION_PIP_TOGGLE), androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED);
+    }
+
+    private void unregisterPipReceiver() {
+        if (mPipReceiver != null) {
+            try {
+                unregisterReceiver(mPipReceiver);
+            } catch (RuntimeException ignored) {
+                // not registered
+            }
+            mPipReceiver = null;
+        }
+    }
+
+    // endregion
 
     private static boolean isShort(Video video) {
         return video != null && (video.isShorts || video.belongsToShorts() || PhoneShortsQueue.contains(video));
@@ -1254,6 +1439,10 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
     }
 
     private void copyFrame(FrameReady done) {
+        if (mPlayer != null && mPlayer.usesSharedVideo()) {
+            done.accept(mPlayer.videoFrame());
+            return;
+        }
         View surface = mPlayer != null ? mPlayer.getSurfaceView() : null;
         android.util.Log.d("PhoneMiniPlayer", "frame copy from " + (surface != null ? surface.getClass().getSimpleName()
                 + " " + surface.getWidth() + "x" + surface.getHeight() : "nothing"));
@@ -1300,6 +1489,16 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
         Video video = currentVideo();
         mMinimizedVideoId = video != null ? video.videoId : null;
         mMinimized = true;
+        if (mPlayer.usesSharedVideo()) {
+            // The card shows the video's texture from now on: this screen lets go of it (its last frame stays up here)
+            if (still != null && mPoster != null) {
+                mPoster.animate().cancel();
+                mPoster.setImageBitmap(still);
+                mPoster.setAlpha(1f);
+                mPoster.setVisibility(View.VISIBLE);
+            }
+            mPlayer.detachVideo();
+        }
         PhoneMiniPlayer.begin(this, still, aspect);
         mPlayer.blockEngine(true); // keeps playing behind the app
         getViewManager().removeTop(this); // Back on the screen underneath doesn't come back here
@@ -1326,6 +1525,22 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
         Video video = currentVideo();
         boolean sameVideo = video != null && mMinimizedVideoId != null && mMinimizedVideoId.equals(video.videoId);
         com.google.android.exoplayer2.SimpleExoPlayer exo = exoPlayer();
+        if (mPlayer != null && mPlayer.usesSharedVideo()) {
+            // The video's texture comes back to this screen (the decoder kept drawing into it: nothing restarts).
+            // The card's last frame covers the video box until the view has drawn it.
+            if (sameVideo && still != null && mPoster != null) {
+                mPoster.animate().cancel();
+                mPoster.setImageBitmap(still);
+                mPoster.setAlpha(1f);
+                mPoster.setVisibility(View.VISIBLE);
+            }
+            // Whatever covers the video box now (this frame, or the one left at the hand-off) lifts at the first frame
+            mPosterUntilFrame = mPoster != null && mPoster.getVisibility() == View.VISIBLE;
+            PhoneMiniPlayer.letGoOfVideo(); // came back from a notification or recents: the card may still show it
+            mPlayer.reattachVideo(this::uncoverVideo);
+            mHandler.postDelayed(this::uncoverVideo, 250); // paused: no new frame comes, the texture has the last one
+            return;
+        }
         if (!sameVideo || still == null || mPoster == null || exo == null) {
             return; // another video: its thumbnail shows until it plays
         }
@@ -1592,7 +1807,7 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
         });
         mFullscreenButton.setOnClickListener(v -> toggleFullscreen());
         findViewById(R.id.phone_ctl_collapse).setOnClickListener(v -> onBackPressed());
-        findViewById(R.id.phone_ctl_settings).setOnClickListener(v -> clickButton(R.id.lb_control_high_quality));
+        findViewById(R.id.phone_ctl_settings).setOnClickListener(v -> openPlayerSheet());
         findViewById(R.id.phone_ctl_cc).setOnClickListener(v -> clickButton(R.id.lb_control_closed_captioning));
         findViewById(R.id.phone_ctl_speed).setOnClickListener(v -> openSpeedMenu());
         findViewById(R.id.phone_ctl_autoplay).setOnClickListener(v -> toggleAutoplay());
@@ -1662,6 +1877,7 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
         if (mPlayer == null) {
             return;
         }
+        updatePipParams();
         boolean playing = mPlayer.getPlayWhenReady();
         mPlayButton.setImageResource(playing ? R.drawable.ic_phone_pause : R.drawable.ic_phone_play);
         if (mShortsPaused != null) {
@@ -2450,6 +2666,46 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
     }
 
     // endregion
+
+    /** The gear: Quality, Playback speed, Captions, More settings (see PhonePlayerSheet) */
+    private void openPlayerSheet() {
+        if (mPlayer == null) {
+            return;
+        }
+        mHandler.removeCallbacks(mAutoHide);
+        PhonePlayerSheet.show(this, new PhonePlayerSheet.Host() {
+            @Override
+            public PhonePlaybackFragment player() {
+                return mPlayer;
+            }
+
+            @Override
+            public String playingQuality() {
+                com.google.android.exoplayer2.SimpleExoPlayer exo = exoPlayer();
+                com.google.android.exoplayer2.Format format = exo != null ? exo.getVideoFormat() : null;
+                if (format == null || format.height <= 0) {
+                    return null;
+                }
+                int fps = Math.round(format.frameRate);
+                return Math.min(format.width, format.height) + "p" + (fps >= 48 ? String.valueOf(fps) : "");
+            }
+
+            @Override
+            public void openSpeed() {
+                openSpeedMenu();
+            }
+
+            @Override
+            public void openCaptions() {
+                clickButton(R.id.lb_control_closed_captioning);
+            }
+
+            @Override
+            public void openMoreSettings() {
+                clickButton(R.id.lb_control_high_quality);
+            }
+        });
+    }
 
     private void clickButton(int buttonId) {
         if (buttonId == R.id.action_thumbs_up || buttonId == R.id.action_thumbs_down || buttonId == R.id.action_subscribe) {

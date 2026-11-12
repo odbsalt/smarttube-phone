@@ -134,6 +134,14 @@ final class PhoneMiniPlayer {
         return sActive && sSurface != null;
     }
 
+    /** The player screen takes the video's texture back (also when it came to the front some other way) */
+    static void letGoOfVideo() {
+        Card card = sCard.get();
+        if (card != null) {
+            card.letGoOfVideo();
+        }
+    }
+
     static Bitmap takeStill() {
         Bitmap still = sStill;
         sStill = null;
@@ -148,6 +156,7 @@ final class PhoneMiniPlayer {
             return;
         }
         card.keepStill();
+        card.letGoOfVideo(); // the player screen shows the video's texture again
         PhoneActivity host = card.mHost;
         host.startActivity(new android.content.Intent(host, PhonePlaybackActivity.class)
                 .addFlags(android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP));
@@ -266,6 +275,8 @@ final class PhoneMiniPlayer {
         private float mStartX;
         private float mStartY;
         private boolean mDragging;
+        /** Shows the video's own texture (see PhoneVideoSurface), not a surface of its own */
+        private boolean mShared;
         private ValueAnimator mMove;
         private VelocityTracker mVelocity;
 
@@ -300,6 +311,8 @@ final class PhoneMiniPlayer {
 
             mVideo = new TextureView(host);
             mVideo.setSurfaceTextureListener(this);
+            // The video's own texture (see PhoneVideoSurface): the decoder goes on drawing into it, nothing restarts
+            mShared = PhoneVideoSurface.showIn(mVideo);
             addView(mVideo, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER));
 
             mStill = new ImageView(host);
@@ -317,8 +330,13 @@ final class PhoneMiniPlayer {
                     PhoneUi.loadThumb(mStill, video, false);
                 }
             }
-            android.util.Log.d(TAG, "card: still " + (still != null));
+            android.util.Log.d(TAG, "card: still " + (still != null) + ", shared video " + mShared);
             addView(mStill, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            if (mShared) {
+                // The texture already holds the current frame: it shows as soon as the card is drawn (a paused video
+                // sends no new frame to wait for)
+                mHandler.postDelayed(this::revealVideo, 200);
+            }
 
             int button = Math.round(30 * mDensity);
             int inset = Math.round(6 * mDensity);
@@ -442,6 +460,31 @@ final class PhoneMiniPlayer {
         }
 
         /** Remember the frame on screen for whatever shows the video next */
+        private void revealVideo() {
+            if (mGotFrame || mVideo.getParent() == null) {
+                return;
+            }
+            mGotFrame = true;
+            mStill.animate().alpha(0f).setDuration(120).withEndAction(() -> mStill.setVisibility(View.GONE)).start();
+        }
+
+        /** The card stops showing the video's texture (its last frame stays up) so the player screen can show it */
+        void letGoOfVideo() {
+            if (!mShared || mVideo.getParent() == null) {
+                return;
+            }
+            Bitmap frame = sStill;
+            if (frame != null) {
+                mStill.setImageBitmap(frame);
+                mStill.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            }
+            mStill.animate().cancel();
+            mStill.setAlpha(1f);
+            mStill.setVisibility(View.VISIBLE);
+            removeView(mVideo);
+            mGotFrame = false;
+        }
+
         void keepStill() {
             if (mGotFrame && mVideo.isAvailable()) {
                 try {
@@ -490,6 +533,13 @@ final class PhoneMiniPlayer {
 
         @Override
         public void onSurfaceTextureAvailable(SurfaceTexture texture, int width, int height) {
+            if (mShared || PhoneVideoSurface.texture() != null) {
+                // Its own texture appeared (the view was re-created): the video's texture instead
+                mShared = PhoneVideoSurface.showIn(mVideo);
+                if (mShared) {
+                    return;
+                }
+            }
             mSurface = new Surface(texture);
             mGotFrame = false;
             attach();
@@ -501,6 +551,9 @@ final class PhoneMiniPlayer {
 
         @Override
         public boolean onSurfaceTextureDestroyed(SurfaceTexture texture) {
+            if (PhoneVideoSurface.isShared(texture)) {
+                return false; // the video's texture is never released by a view
+            }
             Surface surface = mSurface;
             mSurface = null;
             if (surface != null) {
