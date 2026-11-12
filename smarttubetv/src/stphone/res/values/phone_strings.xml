@@ -124,7 +124,6 @@
     <string name="phone_incognito">Incognito</string>
     <string name="phone_you_watch_later">Watch later</string>
     <string name="phone_you_liked">Liked videos</string>
-    <string name="phone_quality">Quality</string>
     <string name="phone_quality_auto">Auto (recommended)</string>
     <string name="phone_quality_auto_short">Auto</string>
     <string name="phone_playback_speed">Playback speed</string>
