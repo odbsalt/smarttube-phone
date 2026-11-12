@@ -565,9 +565,13 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
     private String mPipState;
     private android.content.BroadcastReceiver mPipReceiver;
 
-    private static boolean pipOnLeave(android.content.Context context) {
-        return com.liskovsoft.smartyoutubetv2.common.prefs.PlayerData.instance(context).getBackgroundMode()
-                == PlayerConstants.BACKGROUND_MODE_PIP;
+    /** Settings > Picture in picture (on by default). SmartTube's own background mode stays "sound only". */
+    static boolean pipOnLeave(android.content.Context context) {
+        return Build.VERSION.SDK_INT >= 26 && context.getSharedPreferences("phone_defaults", MODE_PRIVATE).getBoolean("pip_on_leave", true);
+    }
+
+    static void setPipOnLeave(android.content.Context context, boolean on) {
+        context.getSharedPreferences("phone_defaults", MODE_PRIVATE).edit().putBoolean("pip_on_leave", on).apply();
     }
 
     /**
@@ -613,14 +617,7 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
         if (video != null && !video.isEmpty()) {
             builder.setSourceRectHint(video);
         }
-        boolean playing = mPlayer != null && mPlayer.getPlayWhenReady();
-        android.app.PendingIntent toggle = android.app.PendingIntent.getBroadcast(this, 4721,
-                new android.content.Intent(ACTION_PIP_TOGGLE).setPackage(getPackageName()),
-                android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE);
-        String label = getString(R.string.phone_mini_play_pause);
-        builder.setActions(java.util.Collections.singletonList(new android.app.RemoteAction(
-                android.graphics.drawable.Icon.createWithResource(this, playing ? R.drawable.ic_phone_pause : R.drawable.ic_phone_play),
-                label, label, toggle)));
+        builder.setActions(java.util.Collections.singletonList(playPauseAction()));
         if (Build.VERSION.SDK_INT >= 31) {
             // Never on its own: Android's automatic entry also fires when the app itself opens another screen (Home for
             // the mini player, the share sheet, a channel...), which put the whole app into the floating window.
@@ -629,6 +626,19 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
             builder.setSeamlessResizeEnabled(false); // a cross-fade instead of half drawn frames while resizing
         }
         return builder.build();
+    }
+
+    /** The floating window's play / pause button */
+    @androidx.annotation.RequiresApi(26)
+    private android.app.RemoteAction playPauseAction() {
+        boolean playing = mPlayer != null && mPlayer.getPlayWhenReady();
+        android.app.PendingIntent toggle = android.app.PendingIntent.getBroadcast(this, 4721,
+                new android.content.Intent(ACTION_PIP_TOGGLE).setPackage(getPackageName()),
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE);
+        String label = getString(R.string.phone_mini_play_pause);
+        return new android.app.RemoteAction(
+                android.graphics.drawable.Icon.createWithResource(this, playing ? R.drawable.ic_phone_pause : R.drawable.ic_phone_play),
+                label, label, toggle);
     }
 
     /** The video's own shape, within what Android accepts for the floating window */
@@ -666,43 +676,10 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
     /** Home pressed or the app switched away from: the floating window (regular videos only, never Shorts) */
     @Override
     public void onUserLeaveHint() {
-        if (!pipOnLeave(this)) {
-            super.onUserLeaveHint(); // SmartTube's background modes (sound only, ...)
+        if (!mAppLeaving && !getViewManager().isNewViewPending() && canEnterPip() && enterFloatingWindow()) {
             return;
         }
-        if (mAppLeaving || getViewManager().isNewViewPending()) {
-            return; // one of the app's own screens is opening: not leaving the app
-        }
-        if (canEnterPip()) {
-            enterPip();
-        } else if (!mShortsMode && mPlayer != null && mPlayer.getPlayWhenReady() && !isFinishing()) {
-            mPlayer.blockEngine(true); // no floating window here: the sound goes on (notification controls)
-        }
-    }
-
-    private void enterPip() {
-        if (Build.VERSION.SDK_INT < 26) {
-            return;
-        }
-        // The screen becomes only the video BEFORE Android captures it for the shrinking window, so the page and the
-        // controls don't flash inside the window
-        android.app.PictureInPictureParams params = pipParams(false, videoRectOnScreen());
-        mPipEnterPending = true;
-        showPhoneControls(false);
-        applyLayoutMode();
-        boolean entered;
-        try {
-            entered = enterPictureInPictureMode(params);
-        } catch (RuntimeException e) {
-            entered = false;
-        }
-        if (!entered) {
-            mPipEnterPending = false;
-            applyLayoutMode();
-            if (mPlayer != null && mPlayer.getPlayWhenReady()) {
-                mPlayer.blockEngine(true); // refused: the sound goes on
-            }
-        }
+        super.onUserLeaveHint(); // as before: SmartTube's background mode (sound only)
     }
 
     private void registerPipReceiver() {
@@ -1603,9 +1580,19 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
      * Drag the player down: keep watching in a floating window and go back to the app.
      */
     private void enterMiniPlayer() {
-        if (Build.VERSION.SDK_INT < 26) {
+        if (!enterFloatingWindow()) {
             finish();
-            return;
+        }
+    }
+
+    /**
+     * Android's floating window, the way the earlier builds entered it (the one that worked without glitches): straight
+     * from the video as it is on screen, the layout tidied up only once the window has its small size (see
+     * onPictureInPictureModeChanged). Plus a play/pause button in the window.
+     */
+    private boolean enterFloatingWindow() {
+        if (Build.VERSION.SDK_INT < 26) {
+            return false;
         }
         try {
             android.app.PictureInPictureParams.Builder builder = new android.app.PictureInPictureParams.Builder()
@@ -1618,14 +1605,13 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
             if (Build.VERSION.SDK_INT >= 31) {
                 // Video doesn't resize seamlessly: Android cross-fades instead of showing half-drawn (black) frames
                 builder.setSeamlessResizeEnabled(false);
+                builder.setAutoEnterEnabled(false);
             }
-            android.app.PictureInPictureParams params = builder.build();
+            builder.setActions(java.util.Collections.singletonList(playPauseAction()));
             showPhoneControls(false);
-            if (!enterPictureInPictureMode(params)) {
-                finish();
-            }
+            return enterPictureInPictureMode(builder.build());
         } catch (IllegalStateException | IllegalArgumentException e) {
-            finish();
+            return false;
         }
     }
 

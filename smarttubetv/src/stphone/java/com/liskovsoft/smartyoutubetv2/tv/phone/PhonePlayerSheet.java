@@ -75,7 +75,7 @@ final class PhonePlayerSheet {
 
     /** "Auto (1080p60)" or the chosen resolution */
     private static String qualityLabel(Activity activity, Host host) {
-        FormatItem chosen = chosenFormat(host.player());
+        FormatItem chosen = chosenFormat(activity, host.player());
         if (chosen == null) {
             String playing = host.playingQuality();
             String auto = activity.getString(R.string.phone_quality_auto_short);
@@ -89,8 +89,7 @@ final class PhonePlayerSheet {
         List<FormatItem> formats = player != null ? player.getVideoFormats() : null;
         Sheet sheet = new Sheet(activity, activity.getString(R.string.phone_quality));
 
-        FormatItem chosen = chosenFormat(player);
-        FormatItem auto = null;
+        FormatItem chosen = chosenFormat(activity, player);
         Map<String, FormatItem> byLabel = new LinkedHashMap<>();
         List<FormatItem> sorted = formats != null ? new ArrayList<>(formats) : new ArrayList<>();
         Collections.sort(sorted, (a, b) -> {
@@ -101,12 +100,8 @@ final class PhonePlayerSheet {
             if (format == null) {
                 continue;
             }
-            if (format.isDefault()) {
-                auto = format;
-                continue;
-            }
-            if (format.getHeight() <= 0) {
-                continue;
+            if (format.isDefault() || format.getHeight() <= 0) {
+                continue; // SmartTube's "default" entry switches the video off (sound only): not a quality
             }
             String label = label(format);
             // One row per resolution (the same one comes in several codecs): the chosen one wins, else the first
@@ -115,26 +110,44 @@ final class PhonePlayerSheet {
             }
         }
 
-        FormatItem autoFormat = auto != null ? auto : FormatItem.VIDEO_AUTO;
         sheet.addRow(0, activity.getString(R.string.phone_quality_auto), null, chosen == null, () -> {
             sheet.dismiss();
-            apply(activity, player, autoFormat);
+            setAuto(activity, true);
+            apply(activity, player, autoFormat());
         });
         for (Map.Entry<String, FormatItem> entry : byLabel.entrySet()) {
             FormatItem format = entry.getValue();
             boolean selected = chosen != null && label(chosen).equals(entry.getKey());
             sheet.addRow(0, entry.getKey(), null, selected, () -> {
                 sheet.dismiss();
+                setAuto(activity, false);
                 apply(activity, player, format);
             });
         }
         sheet.show();
     }
 
+    /**
+     * Auto: the phone's own choice, the best quality up to 1080p (60 fps where the phone decodes VP9 at 1080p), the
+     * same as the app's first-start default. SmartTube has no adaptive choice; its "default" entry turns the video off.
+     */
+    private static FormatItem autoFormat() {
+        return com.liskovsoft.sharedutils.helpers.DeviceHelpers.isVP9ResolutionSupported(1080)
+                ? FormatItem.VIDEO_FHD_VP9_60 : FormatItem.VIDEO_FHD_AVC_30;
+    }
+
+    private static boolean isAuto(Activity activity) {
+        return activity.getSharedPreferences("phone_defaults", Activity.MODE_PRIVATE).getBoolean("quality_auto", true);
+    }
+
+    private static void setAuto(Activity activity, boolean auto) {
+        activity.getSharedPreferences("phone_defaults", Activity.MODE_PRIVATE).edit().putBoolean("quality_auto", auto).apply();
+    }
+
     /** The resolution the user picked, null for Auto */
-    private static FormatItem chosenFormat(PhonePlaybackFragment player) {
+    private static FormatItem chosenFormat(Activity activity, PhonePlaybackFragment player) {
         List<FormatItem> formats = player != null ? player.getVideoFormats() : null;
-        if (formats == null) {
+        if (formats == null || isAuto(activity)) {
             return null;
         }
         for (FormatItem format : formats) {
