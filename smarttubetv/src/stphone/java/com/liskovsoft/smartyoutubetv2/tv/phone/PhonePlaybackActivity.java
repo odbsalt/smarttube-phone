@@ -1489,48 +1489,10 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
         mHandler.postDelayed(mAutoHide, HIDE_CONTROLS_MS);
     }
 
-    private String mPipState;
-
-    /**
-     * Leaving the app while a video plays here: Android's floating window (when Background playback is set to
-     * Picture in picture, the phone's default). Android is told ahead of time what the window looks like and, on
-     * Android 12+, to open it on its own, so it grows smoothly out of the video.
-     */
-    private void updatePipParams() {
-        if (Build.VERSION.SDK_INT < 26 || isPip()) {
-            return;
-        }
-        boolean wanted = !mShortsMode && !mMinimized && !mMinimizing && mPlayer != null && mPlayer.getPlayWhenReady()
-                && com.liskovsoft.smartyoutubetv2.common.prefs.PlayerData.instance(this).getBackgroundMode()
-                        == PlayerConstants.BACKGROUND_MODE_PIP;
-        Rect video = mMinimized || mMinimizing ? null : videoRectOnScreen();
-        String state = wanted + " " + mShortsMode + " " + (video != null ? video.flattenToString() : "");
-        if (state.equals(mPipState)) {
-            return;
-        }
-        mPipState = state;
-        android.util.Log.d("PhoneMiniPlayer", "player pip params: " + state);
-        try {
-            android.app.PictureInPictureParams.Builder builder = new android.app.PictureInPictureParams.Builder()
-                    .setAspectRatio(mShortsMode ? new android.util.Rational(9, 16) : new android.util.Rational(16, 9));
-            if (video != null && !video.isEmpty()) {
-                builder.setSourceRectHint(video);
-            }
-            if (Build.VERSION.SDK_INT >= 31) {
-                builder.setAutoEnterEnabled(wanted);
-                builder.setSeamlessResizeEnabled(false);
-            }
-            setPictureInPictureParams(builder.build());
-        } catch (IllegalStateException | IllegalArgumentException e) {
-            android.util.Log.d("PhonePlayback", "pip params: " + e); // no picture-in-picture on this device
-        }
-    }
-
     private void updatePlayButton() {
         if (mPlayer == null) {
             return;
         }
-        updatePipParams();
         boolean playing = mPlayer.getPlayWhenReady();
         mPlayButton.setImageResource(playing ? R.drawable.ic_phone_pause : R.drawable.ic_phone_play);
         if (mShortsPaused != null) {

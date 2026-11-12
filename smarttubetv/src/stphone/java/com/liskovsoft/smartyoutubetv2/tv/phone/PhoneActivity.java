@@ -79,69 +79,6 @@ public abstract class PhoneActivity extends MotherActivity {
         PhoneMiniPlayer.onHostStopped(this);
     }
 
-    // region Leaving the app with the mini player on: the video goes on in Android's floating window
-
-    private String mPipState;
-
-    /** The mini player calls this when it appears, moves, pauses or goes away: keeps Android's picture told */
-    void updateMiniPlayerPip() {
-        if (Build.VERSION.SDK_INT < 26 || !hostsMiniPlayer()) {
-            return;
-        }
-        boolean wanted = PhoneMiniPlayer.wantsPip(this);
-        android.graphics.Rect card = PhoneMiniPlayer.cardRect(this);
-        String state = wanted + " " + (card != null ? card.flattenToString() : "") + " " + PhoneMiniPlayer.pipAspect();
-        if (state.equals(mPipState)) {
-            return;
-        }
-        mPipState = state;
-        android.util.Log.d("PhoneMiniPlayer", "host pip params: " + state);
-        try {
-            setPictureInPictureParams(miniPlayerPipParams(wanted, card));
-        } catch (RuntimeException e) {
-            android.util.Log.d("PhoneMiniPlayer", "pip params: " + e); // no picture-in-picture on this device
-        }
-    }
-
-    @androidx.annotation.RequiresApi(26)
-    private android.app.PictureInPictureParams miniPlayerPipParams(boolean wanted, android.graphics.Rect card) {
-        android.app.PictureInPictureParams.Builder builder = new android.app.PictureInPictureParams.Builder()
-                .setAspectRatio(PhoneMiniPlayer.pipAspect());
-        if (card != null && !card.isEmpty()) {
-            builder.setSourceRectHint(card); // the floating window grows out of the card
-        }
-        if (Build.VERSION.SDK_INT >= 31) {
-            builder.setAutoEnterEnabled(wanted); // Android 12+: on its own, smoothly, when the app is left
-            builder.setSeamlessResizeEnabled(false);
-        }
-        return builder.build();
-    }
-
-    @Override
-    public void onUserLeaveHint() {
-        super.onUserLeaveHint();
-        // Android 8 to 11 (newer ones enter on their own, see above)
-        if (Build.VERSION.SDK_INT >= 26 && Build.VERSION.SDK_INT < 31 && hostsMiniPlayer()
-                && PhoneMiniPlayer.wantsPip(this) && !isInPictureInPictureMode()) {
-            try {
-                enterPictureInPictureMode(miniPlayerPipParams(true, PhoneMiniPlayer.cardRect(this)));
-            } catch (RuntimeException e) {
-                android.util.Log.d("PhoneMiniPlayer", "pip: " + e);
-            }
-        }
-    }
-
-    @Override
-    public void onPictureInPictureModeChanged(boolean inPip, android.content.res.Configuration newConfig) {
-        super.onPictureInPictureModeChanged(inPip, newConfig);
-        // Out of the floating window while this screen isn't coming back to the front: the user closed it
-        boolean closed = !inPip && !getLifecycle().getCurrentState().isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED);
-        android.util.Log.d("PhoneMiniPlayer", "host pip " + inPip + (closed ? ", closed" : ""));
-        PhoneMiniPlayer.onHostPip(this, inPip, closed);
-    }
-
-    // endregion
-
     /** Shows the mini player card while a video plays in it (not on full screen pages like sign in or updates) */
     protected boolean hostsMiniPlayer() {
         return true;
