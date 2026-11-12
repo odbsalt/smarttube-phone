@@ -2308,7 +2308,9 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
             return;
         }
         presenter().openVideo(video);
-        if (PhoneShortsQueue.isNearEnd(video)) {
+        if (PhoneShortsQueue.hasOwnFeed()) {
+            PhoneShortsQueue.markPlayed(video); // also loads the next page near the end
+        } else if (PhoneShortsQueue.isNearEnd(video)) {
             // Load more Shorts into the same list
             Video last = PhoneShortsQueue.last();
             if (last != null) {
