@@ -125,6 +125,19 @@ if [ -n "$XY" ]; then
   sleep 6
   shot 15b_shorts_8s
   tasks 15_shorts
+  # Swipe up for the next Short: the title should change
+  title() {
+    adb shell uiautomator dump /sdcard/ui.xml > /dev/null 2>&1
+    adb shell cat /sdcard/ui.xml | tr '>' '\n' | grep 'phone_shorts_title' | head -1 | sed -E 's/.* text="([^"]*)".*/\1/'
+  }
+  echo "short before swipe: $(title)"
+  adb shell input swipe 540 1500 540 500 250
+  sleep 4
+  echo "short after swipe: $(title)"
+  shot 15c_shorts_swiped
+  adb shell input swipe 540 1500 540 500 250
+  sleep 4
+  echo "short after 2nd swipe: $(title)"
   XY=$(center_of_text "Home")
   echo "home tab on shorts at: $XY"
   if [ -n "$XY" ]; then adb shell input tap $XY; else adb shell input keyevent KEYCODE_BACK; fi
@@ -151,7 +164,7 @@ fi
 
 adb logcat -d -b crash > $OUT/crash.txt
 adb logcat -d | grep -E "ActivityTaskManager: (START|Displayed)|wm_finish|wm_destroy" | grep -i smarttube > $OUT/activity_log.txt
-adb logcat -d | grep -iE "PhoneMiniPlayer|exoplayer|MediaCodec.*(error|Exception)|surface.*abandon|PlaybackFragment|AndroidRuntime" | grep -v SabrStream | tail -120 > $OUT/player_log.txt
+adb logcat -d | grep -iE "PhoneShorts|PhoneMiniPlayer|exoplayer|MediaCodec.*(error|Exception)|surface.*abandon|PlaybackFragment|AndroidRuntime" | grep -v SabrStream | tail -120 > $OUT/player_log.txt
 
 echo "== crash"; cat $OUT/crash.txt
 echo "== activities"; cat $OUT/activity_log.txt

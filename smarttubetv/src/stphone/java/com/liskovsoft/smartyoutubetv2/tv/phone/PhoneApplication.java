@@ -164,15 +164,18 @@ public class PhoneApplication extends MainApplication {
                 PhonePlaybackActivity.class);
         // One Home and one player in the task (both singleTop). While the mini player plays, Home comes to the front
         // without closing the player behind it; otherwise Home closes the screens above it, as before.
+        // Every screen the app opens itself is marked "no user action": Android then doesn't treat it as the user leaving
+        // the app, so the player's floating window (Android 12+ automatic entry) never opens on an in-app screen change
+        int inApp = android.content.Intent.FLAG_ACTIVITY_NO_USER_ACTION;
         viewManager.setLaunchFlags(activityClass -> {
             if (activityClass == PhonePlaybackActivity.class) {
-                return android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP;
+                return inApp | android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP;
             }
             if (activityClass == PhoneBrowseActivity.class) {
-                return PhoneMiniPlayer.isActive() ? android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
-                        : android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP | android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP;
+                return inApp | (PhoneMiniPlayer.isActive() ? android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                        : android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP | android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP);
             }
-            return 0;
+            return inApp;
         });
         registerActivityLifecycleCallbacks(new ActivityLifecycleCallbacks() {
             @Override
