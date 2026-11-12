@@ -124,8 +124,10 @@
     <string name="phone_incognito">Incognito</string>
     <string name="phone_you_watch_later">Watch later</string>
     <string name="phone_you_liked">Liked videos</string>
-    <string name="phone_you_view_all">View all</string>
-    <string name="phone_you_back">Back to You</string>
+    <string name="phone_you_history">History</string>
+    <string name="phone_you_library">Library</string>
+    <string name="phone_you_private">Private</string>
+    <string name="phone_settings_open">Settings</string>
     <string name="phone_new_videos">New video notifications</string>
     <string name="phone_new_videos_channel">New videos from subscriptions</string>
     <string name="phone_new_videos_empty">No new videos yet.\nNew videos from the channels you\'re subscribed to show up here.</string>

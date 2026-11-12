@@ -55,6 +55,12 @@ public class PhoneApplication extends MainApplication {
         if (!tweaks.isDontResizeVideoToFitDialogEnabled()) {
             tweaks.setDontResizeVideoToFitDialogEnabled(true);
         }
+        // SmartTube's TV default: a new video decoder every time the picture moves to another surface (player to mini
+        // player and back). The new decoder waits for the next key frame, so the picture froze for a moment while the
+        // sound went on. Phones (Android 8+) switch the surface of the running decoder instead.
+        if (tweaks.isSetOutputSurfaceWorkaroundEnabled()) {
+            tweaks.setSetOutputSurfaceWorkaroundEnabled(false);
+        }
 
         android.content.SharedPreferences prefs = getSharedPreferences("phone_defaults", MODE_PRIVATE);
         if (!prefs.getBoolean("background_playback_v1", false)) {
@@ -69,16 +75,15 @@ public class PhoneApplication extends MainApplication {
         // Phones open videos in 1080p at most by default. SmartTube's TV default is 4K 60 fps on any device that can
         // decode it: every video then starts by downloading 4K pieces for a phone screen (slow, heavy on data).
         // Once: a quality picked in the player afterwards stays.
-        if (!prefs.getBoolean("background_pip_v1", false)) {
-            // Leaving the app keeps the video on screen in Android's floating window (it was: sound only). Locking the
-            // phone still keeps the sound. Settings > General > Background playback changes it back.
+        if (prefs.getBoolean("background_pip_v1", false) && !prefs.getBoolean("background_pip_undone", false)) {
+            // Build 92 switched Background playback from "sound only" to Android's floating window, which stuttered.
+            // Back to sound only (Settings > General > Background playback still offers the floating window).
             com.liskovsoft.smartyoutubetv2.common.prefs.PlayerData playerData =
                     com.liskovsoft.smartyoutubetv2.common.prefs.PlayerData.instance(this);
-            if (android.os.Build.VERSION.SDK_INT >= 26
-                    && playerData.getBackgroundMode() == com.liskovsoft.smartyoutubetv2.common.app.models.playback.manager.PlayerConstants.BACKGROUND_MODE_SOUND) {
-                playerData.setBackgroundMode(com.liskovsoft.smartyoutubetv2.common.app.models.playback.manager.PlayerConstants.BACKGROUND_MODE_PIP);
+            if (playerData.getBackgroundMode() == com.liskovsoft.smartyoutubetv2.common.app.models.playback.manager.PlayerConstants.BACKGROUND_MODE_PIP) {
+                playerData.setBackgroundMode(com.liskovsoft.smartyoutubetv2.common.app.models.playback.manager.PlayerConstants.BACKGROUND_MODE_SOUND);
             }
-            prefs.edit().putBoolean("background_pip_v1", true).apply();
+            prefs.edit().putBoolean("background_pip_undone", true).apply();
         }
 
         if (!prefs.getBoolean("phone_quality_v1", false)) {

@@ -100,9 +100,9 @@ XY=$(center_of_text "You")
 if [ -n "$XY" ]; then adb shell input tap $XY; else adb shell input tap 945 2280; fi
 sleep 6
 shot 7_you
-# The You page lists its places as rows: Settings is one of them
-XY=$(center_of_text "Settings")
-echo "settings row at: $XY"
+# Settings: the gear at the top of the You page
+XY=$(center_of "Settings")
+echo "settings button at: $XY"
 if [ -n "$XY" ]; then
   adb shell input tap $XY
   sleep 4
@@ -129,31 +129,9 @@ if [ -n "$XY" ]; then
   shot 11_back_from_notifications
 fi
 
-# 9. Leave the app with the mini player up and playing: the screen becomes Android's floating window.
-# Last, because coming back into the app afterwards opens the player. Videos don't play here (YouTube blocks the
-# emulator), so the card's play button is tapped to put the player into "playing" first.
-adb shell input tap 540 1000
-sleep 15
-adb shell input swipe 540 350 540 1400 450
-sleep 5
-XY=$(center_of "Play or pause")
-echo "play button at: $XY"
-if [ -n "$XY" ]; then adb shell input tap $XY; fi
-sleep 2
-shot 12_card_before_leaving
-adb shell input keyevent KEYCODE_HOME
-sleep 5
-shot 13_left_app
-echo "== pip"
-adb shell dumpsys activity activities | grep -E "mode=pinned|windowingMode=pinned|mPictureInPicture|isInPictureInPictureMode" | head -6
-adb shell am start -n "$PKG/$SPLASH"
-sleep 6
-shot 14_back_in_app
-tasks 14_back_in_app
-
 adb logcat -d -b crash > $OUT/crash.txt
 adb logcat -d | grep -E "ActivityTaskManager: (START|Displayed)|wm_finish|wm_destroy" | grep -i smarttube > $OUT/activity_log.txt
-adb logcat -d | grep -iE "PhoneMiniPlayer|PhonePlayback|exoplayer|MediaCodec.*(error|Exception)|surface.*abandon|PlaybackFragment|AndroidRuntime" | grep -v SabrStream | tail -120 > $OUT/player_log.txt
+adb logcat -d | grep -iE "PhoneMiniPlayer|exoplayer|MediaCodec.*(error|Exception)|surface.*abandon|PlaybackFragment|AndroidRuntime" | grep -v SabrStream | tail -120 > $OUT/player_log.txt
 
 echo "== crash"; cat $OUT/crash.txt
 echo "== activities"; cat $OUT/activity_log.txt

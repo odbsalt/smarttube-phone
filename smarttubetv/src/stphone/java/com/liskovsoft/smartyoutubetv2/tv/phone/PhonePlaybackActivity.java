@@ -79,6 +79,8 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
     private static final int LEVEL_NONE = 0;
     private static final int LEVEL_BRIGHTNESS = 1;
     private static final int LEVEL_VOLUME = 2;
+    /** Not a level: a swipe down in the middle of the full screen video, which leaves full screen */
+    private static final int LEVEL_EXIT = 3;
     private int mLevelMode = LEVEL_NONE;
     private float mLevelStartX;
     private float mLevelStartY;
@@ -362,6 +364,12 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
         boolean portrait = newConfig.orientation != Configuration.ORIENTATION_LANDSCAPE;
         if (portrait != mPortrait) {
             mPortrait = portrait;
+            if (mVideoBox != null) {
+                // A swipe into or out of full screen may still be letting the video settle
+                mVideoBox.animate().cancel();
+                mVideoBox.setScaleX(1f);
+                mVideoBox.setScaleY(1f);
+            }
             applyLayoutMode();
             applySystemBars();
         }
@@ -687,6 +695,136 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
     private float mDragStartX;
     private long mDragStartTime;
 
+    /** Whatever got this touch so far (the player, the controls, the list) stops handling it: a gesture took over */
+    private void cancelRoutedTouch(MotionEvent event) {
+        MotionEvent cancel = MotionEvent.obtain(event);
+        cancel.setAction(MotionEvent.ACTION_CANCEL);
+        if (Boolean.TRUE.equals(mRouteTouchToPlayer)) {
+            super.dispatchTouchEvent(cancel);
+        } else {
+            getWindow().superDispatchTouchEvent(cancel);
+        }
+        cancel.recycle();
+        mRouteTouchToPlayer = null;
+    }
+
+    private boolean mFullscreenSwipe;
+
+    /**
+     * Portrait: swipe up on the video for full screen (the video grows a little under the finger). The start of the
+     * touch is the one the drag down remembers.
+     */
+    private boolean handleFullscreenSwipe(MotionEvent event) {
+        int action = event.getActionMasked();
+        if (action == MotionEvent.ACTION_DOWN) {
+            mFullscreenSwipe = false;
+            return false;
+        }
+        float up = mDragStartY - event.getRawY();
+        float dx = Math.abs(event.getRawX() - mDragStartX);
+        if (action == MotionEvent.ACTION_MOVE) {
+            if (!mFullscreenSwipe) {
+                int slop = android.view.ViewConfiguration.get(this).getScaledTouchSlop() * 2;
+                if (up <= slop || up <= dx * 1.5f || mShrinkDragging) {
+                    return false;
+                }
+                mFullscreenSwipe = true;
+                cancelRoutedTouch(event);
+                showPhoneControls(false);
+            }
+            float pull = Math.max(0f, Math.min(1f, up / dp(160)));
+            mVideoBox.setScaleX(1f + 0.06f * pull);
+            mVideoBox.setScaleY(1f + 0.06f * pull);
+            return true;
+        }
+        if (!mFullscreenSwipe) {
+            return false;
+        }
+        mFullscreenSwipe = false;
+        mRouteTouchToPlayer = null;
+        mVideoBox.animate().scaleX(1f).scaleY(1f).setDuration(150).start();
+        if (action == MotionEvent.ACTION_UP && up > dp(56)) {
+            toggleFullscreen();
+        }
+        return true;
+    }
+
+    private boolean mLineScrub;
+    private boolean mLineCandidate;
+    private float mLineStartX;
+    private float mLineStartY;
+
+    /**
+     * A sideways drag that starts on the progress line (the bottom edge of the video) seeks right away: the controls
+     * come up showing where it is going, and letting go jumps there. A tap or a vertical drag there stays what it was.
+     */
+    private boolean handleLineScrub(MotionEvent event) {
+        int action = event.getActionMasked();
+        if (action == MotionEvent.ACTION_DOWN) {
+            mLineScrub = false;
+            Rect box = new Rect();
+            mVideoBox.getGlobalVisibleRect(box);
+            float strip = dp(mPortrait ? 30 : 64);
+            mLineCandidate = mControls.getVisibility() != View.VISIBLE && mPlayer != null && mPlayer.getDurationMs() > 0
+                    && event.getRawY() > box.bottom - strip && event.getRawY() <= box.bottom;
+            mLineStartX = event.getRawX();
+            mLineStartY = event.getRawY();
+            return false;
+        }
+        if (!mLineCandidate && !mLineScrub) {
+            return false;
+        }
+        if (action == MotionEvent.ACTION_MOVE) {
+            if (!mLineScrub) {
+                float dx = Math.abs(event.getRawX() - mLineStartX);
+                float dy = Math.abs(event.getRawY() - mLineStartY);
+                int slop = android.view.ViewConfiguration.get(this).getScaledTouchSlop();
+                if (dy > slop * 2) {
+                    mLineCandidate = false; // going up or down: another gesture's
+                    return false;
+                }
+                if (dx <= slop || dx <= dy) {
+                    return false;
+                }
+                mLineScrub = true;
+                mLineCandidate = false;
+                cancelRoutedTouch(event);
+                showPhoneControls(true);
+                mIsSeeking = true;
+                mHandler.removeCallbacks(mAutoHide);
+            }
+            scrubTo(event.getRawX());
+            return true;
+        }
+        mLineCandidate = false;
+        if (!mLineScrub) {
+            return false;
+        }
+        mLineScrub = false;
+        mRouteTouchToPlayer = null;
+        mIsSeeking = false;
+        if (action == MotionEvent.ACTION_UP && mPlayer != null) {
+            long duration = mPlayer.getDurationMs();
+            if (duration > 0) {
+                mPlayer.setPositionMs(duration * mSeek.getProgress() / 1000);
+            }
+        }
+        scheduleAutoHide();
+        return true;
+    }
+
+    private void scrubTo(float rawX) {
+        Rect box = new Rect();
+        mVideoBox.getGlobalVisibleRect(box);
+        int progress = Math.max(0, Math.min(1000, Math.round((rawX - box.left) * 1000f / Math.max(1, box.width()))));
+        mSeek.setProgress(progress);
+        mMiniProgress.setProgress(progress);
+        if (mPlayer != null) {
+            long duration = mPlayer.getDurationMs();
+            updateTimeText(duration * progress / 1000, duration);
+        }
+    }
+
     /** True when a quick downward drag that started on the video ends (YouTube: drag the player down) */
     private boolean mShrinkDragging;
     private android.animation.ValueAnimator mShrinkAnimator;
@@ -908,12 +1046,23 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
     private boolean routeTouch(MotionEvent event) {
 
         // Mid drag the finger is often below the shrinking video already: the drag keeps the touch to its end
-        if (event.getActionMasked() == MotionEvent.ACTION_DOWN || (mRouteTouchToPlayer == null && !mShrinkDragging)) {
+        if (event.getActionMasked() == MotionEvent.ACTION_DOWN
+                || (mRouteTouchToPlayer == null && !mShrinkDragging && !mFullscreenSwipe && !mLineScrub)) {
             Rect box = new Rect();
             mVideoBox.getGlobalVisibleRect(box);
             boolean onVideo = box.contains((int) event.getRawX(), (int) event.getRawY());
             mTouchStartedOnVideo = onVideo;
             mRouteTouchToPlayer = onVideo && !mShortsMode && mControls.getVisibility() != View.VISIBLE;
+        }
+
+        // Drag along the progress line at the bottom of the video to seek, without bringing the controls up first
+        if (mTouchStartedOnVideo && !mShortsMode && handleLineScrub(event)) {
+            return true;
+        }
+
+        // Swipe the video up: full screen
+        if (mTouchStartedOnVideo && mPortrait && !mShortsMode && handleFullscreenSwipe(event)) {
+            return true;
         }
 
         // Swipe the video down to shrink the player (portrait, regular videos): the video follows the finger
@@ -1312,8 +1461,13 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
                     }
                     Rect box = new Rect();
                     mVideoBox.getGlobalVisibleRect(box);
-                    mLevelMode = mLevelStartX < box.centerX() ? LEVEL_BRIGHTNESS : LEVEL_VOLUME;
-                    mLevelStartValue = mLevelMode == LEVEL_BRIGHTNESS ? currentBrightness() : currentVolume();
+                    float across = (mLevelStartX - box.left) / Math.max(1f, box.width());
+                    if (dy > 0 && across > 0.33f && across < 0.67f) {
+                        mLevelMode = LEVEL_EXIT; // down the middle: out of full screen (the sides stay brightness and volume)
+                    } else {
+                        mLevelMode = mLevelStartX < box.centerX() ? LEVEL_BRIGHTNESS : LEVEL_VOLUME;
+                        mLevelStartValue = mLevelMode == LEVEL_BRIGHTNESS ? currentBrightness() : currentVolume();
+                    }
                     mLevelStartY = event.getRawY();
 
                     // Whatever got the touch so far (player, controls) must not see a tap
@@ -1321,6 +1475,13 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
                     cancel.setAction(MotionEvent.ACTION_CANCEL);
                     routeTouch(cancel);
                     cancel.recycle();
+                }
+                if (mLevelMode == LEVEL_EXIT) {
+                    // The video gives a little under the finger
+                    float pull = Math.max(0f, Math.min(1f, (event.getRawY() - mLevelStartY) / dp(180)));
+                    mVideoBox.setScaleX(1f - 0.08f * pull);
+                    mVideoBox.setScaleY(1f - 0.08f * pull);
+                    return true;
                 }
                 float height = Math.max(1, mVideoBox.getHeight() * 0.7f);
                 float value = Math.max(0f, Math.min(1f, mLevelStartValue + (mLevelStartY - event.getRawY()) / height));
@@ -1334,6 +1495,14 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
             }
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL:
+                if (mLevelMode == LEVEL_EXIT) {
+                    mLevelMode = LEVEL_NONE;
+                    mVideoBox.animate().scaleX(1f).scaleY(1f).setDuration(150).start();
+                    if (event.getActionMasked() == MotionEvent.ACTION_UP && event.getRawY() - mLevelStartY > dp(48)) {
+                        toggleFullscreen();
+                    }
+                    return true;
+                }
                 if (mLevelMode != LEVEL_NONE) {
                     mLevelMode = LEVEL_NONE;
                     mHandler.removeCallbacks(mHideLevel);
@@ -1489,47 +1658,10 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
         mHandler.postDelayed(mAutoHide, HIDE_CONTROLS_MS);
     }
 
-    private String mPipState;
-
-    /**
-     * Leaving the app while a video plays here: Android's floating window (when Background playback is set to
-     * Picture in picture, the phone's default). Android is told ahead of time what the window looks like and, on
-     * Android 12+, to open it on its own, so it grows smoothly out of the video.
-     */
-    private void updatePipParams() {
-        if (Build.VERSION.SDK_INT < 26 || isPip()) {
-            return;
-        }
-        boolean wanted = !mShortsMode && !mMinimized && !mMinimizing && mPlayer != null && mPlayer.getPlayWhenReady()
-                && com.liskovsoft.smartyoutubetv2.common.prefs.PlayerData.instance(this).getBackgroundMode()
-                        == PlayerConstants.BACKGROUND_MODE_PIP;
-        Rect video = mMinimized || mMinimizing ? null : videoRectOnScreen();
-        String state = wanted + " " + mShortsMode + " " + (video != null ? video.flattenToString() : "");
-        if (state.equals(mPipState)) {
-            return;
-        }
-        mPipState = state;
-        try {
-            android.app.PictureInPictureParams.Builder builder = new android.app.PictureInPictureParams.Builder()
-                    .setAspectRatio(mShortsMode ? new android.util.Rational(9, 16) : new android.util.Rational(16, 9));
-            if (video != null && !video.isEmpty()) {
-                builder.setSourceRectHint(video);
-            }
-            if (Build.VERSION.SDK_INT >= 31) {
-                builder.setAutoEnterEnabled(wanted);
-                builder.setSeamlessResizeEnabled(false);
-            }
-            setPictureInPictureParams(builder.build());
-        } catch (IllegalStateException | IllegalArgumentException e) {
-            android.util.Log.d("PhonePlayback", "pip params: " + e); // no picture-in-picture on this device
-        }
-    }
-
     private void updatePlayButton() {
         if (mPlayer == null) {
             return;
         }
-        updatePipParams();
         boolean playing = mPlayer.getPlayWhenReady();
         mPlayButton.setImageResource(playing ? R.drawable.ic_phone_pause : R.drawable.ic_phone_play);
         if (mShortsPaused != null) {
