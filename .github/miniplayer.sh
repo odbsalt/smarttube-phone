@@ -66,16 +66,6 @@ pull_record 4_back
 shot 4_card_again
 tasks 4_card_again
 
-# 4b. Leave the app with the card up: the screen becomes Android's floating window. Then back into the app.
-adb shell input keyevent KEYCODE_HOME
-sleep 4
-shot 4b_left_app
-echo "== pip"; adb shell dumpsys activity activities | grep -E "mode=pinned|isInPictureInPictureMode|PINNED" | head -5
-adb shell am start -n "$PKG/$SPLASH"
-sleep 5
-shot 4c_back_in_app
-tasks 4c_back_in_app
-
 # 5. Drag the card to the left, then swipe it down off the screen: the video closes
 XY=$(center_of "Open the player")
 if [ -n "$XY" ]; then
@@ -143,9 +133,31 @@ if [ -n "$XY" ]; then
   shot 11_back_from_notifications
 fi
 
+# 9. Leave the app with the mini player up and playing: the screen becomes Android's floating window.
+# Last, because coming back into the app afterwards opens the player. Videos don't play here (YouTube blocks the
+# emulator), so the card's play button is tapped to put the player into "playing" first.
+adb shell input tap 540 1000
+sleep 15
+adb shell input swipe 540 350 540 1400 450
+sleep 5
+XY=$(center_of "Play or pause")
+echo "play button at: $XY"
+if [ -n "$XY" ]; then adb shell input tap $XY; fi
+sleep 2
+shot 12_card_before_leaving
+adb shell input keyevent KEYCODE_HOME
+sleep 5
+shot 13_left_app
+echo "== pip"
+adb shell dumpsys activity activities | grep -E "mode=pinned|windowingMode=pinned|mPictureInPicture|isInPictureInPictureMode" | head -6
+adb shell am start -n "$PKG/$SPLASH"
+sleep 6
+shot 14_back_in_app
+tasks 14_back_in_app
+
 adb logcat -d -b crash > $OUT/crash.txt
 adb logcat -d | grep -E "ActivityTaskManager: (START|Displayed)|wm_finish|wm_destroy" | grep -i smarttube > $OUT/activity_log.txt
-adb logcat -d | grep -iE "PhoneMiniPlayer|exoplayer|MediaCodec.*(error|Exception)|surface.*abandon|PlaybackFragment|AndroidRuntime" | grep -v SabrStream | tail -120 > $OUT/player_log.txt
+adb logcat -d | grep -iE "PhoneMiniPlayer|PhonePlayback|exoplayer|MediaCodec.*(error|Exception)|surface.*abandon|PlaybackFragment|AndroidRuntime" | grep -v SabrStream | tail -120 > $OUT/player_log.txt
 
 echo "== crash"; cat $OUT/crash.txt
 echo "== activities"; cat $OUT/activity_log.txt
