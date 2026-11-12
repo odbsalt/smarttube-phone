@@ -66,6 +66,16 @@ pull_record 4_back
 shot 4_card_again
 tasks 4_card_again
 
+# 4b. Leave the app with the card up: the screen becomes Android's floating window. Then back into the app.
+adb shell input keyevent KEYCODE_HOME
+sleep 4
+shot 4b_left_app
+echo "== pip"; adb shell dumpsys activity activities | grep -E "mode=pinned|isInPictureInPictureMode|PINNED" | head -5
+adb shell am start -n "$PKG/$SPLASH"
+sleep 5
+shot 4c_back_in_app
+tasks 4c_back_in_app
+
 # 5. Drag the card to the left, then swipe it down off the screen: the video closes
 XY=$(center_of "Open the player")
 if [ -n "$XY" ]; then
