@@ -112,6 +112,26 @@ if [ -n "$XY" ]; then
   shot 9_settings_more
 fi
 
+# 7b. The Shorts tab: straight into a Short (the feed was loaded ahead of time), laid out like the YouTube app
+XY=$(center_of_text "Home")
+if [ -n "$XY" ]; then adb shell input tap $XY; fi
+sleep 3
+XY=$(center_of_text "Shorts")
+echo "shorts tab at: $XY"
+if [ -n "$XY" ]; then
+  adb shell input tap $XY
+  sleep 2
+  shot 15_shorts_2s
+  sleep 6
+  shot 15b_shorts_8s
+  tasks 15_shorts
+  XY=$(center_of_text "Home")
+  echo "home tab on shorts at: $XY"
+  if [ -n "$XY" ]; then adb shell input tap $XY; else adb shell input keyevent KEYCODE_BACK; fi
+  sleep 3
+  shot 16_after_shorts
+fi
+
 # 8. The Notifications tab: its own screen (signed out here: the hint to sign in).
 # From Home: on Settings a row is called Notifications too, and the tab would not be the first match.
 XY=$(center_of_text "Home")
