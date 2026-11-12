@@ -2121,12 +2121,10 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
                     mVelocity.recycle();
                 }
                 mVelocity = android.view.VelocityTracker.obtain();
-                mVelocity.addMovement(event);
+                trackPageVelocity(event);
                 return true;
             case MotionEvent.ACTION_MOVE: {
-                if (mVelocity != null) {
-                    mVelocity.addMovement(event);
-                }
+                trackPageVelocity(event);
                 float dy = event.getRawY() - mPageStartY;
                 if (!mPaging && Math.abs(dy) > android.view.ViewConfiguration.get(this).getScaledTouchSlop()) {
                     mPaging = true;
@@ -2139,6 +2137,13 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
                     preparePage(mIncoming);
                 }
                 if (mPaging) {
+                    if (mIncoming == null && mPageDirection > 0) {
+                        // The next Shorts may have come in meanwhile (the feed loads more while the user swipes)
+                        mIncoming = nextShort();
+                        if (mIncoming != null) {
+                            preparePage(mIncoming);
+                        }
+                    }
                     // Only follow the finger in the chosen direction; rubber band when there is nothing there
                     float offset = mPageDirection > 0 ? Math.min(0, dy) : Math.max(0, dy);
                     if (mIncoming == null) {
@@ -2158,13 +2163,17 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
                     float dy = event.getRawY() - mPageStartY;
                     float velocity = 0;
                     if (mVelocity != null) {
-                        mVelocity.addMovement(event);
+                        trackPageVelocity(event);
                         mVelocity.computeCurrentVelocity(1000);
                         velocity = mVelocity.getYVelocity();
                     }
                     float height = mVideoBox.getHeight();
-                    boolean farEnough = Math.abs(dy) > height * 0.18f || Math.abs(velocity) > 900;
+                    // A short flick is enough (like the YouTube app), or a drag past an eighth of the screen
+                    boolean flicked = mPageDirection > 0 ? velocity < -dp(250) : velocity > dp(250);
+                    boolean farEnough = Math.abs(dy) > height * 0.12f || flicked;
                     boolean rightWay = mPageDirection > 0 ? dy < 0 : dy > 0;
+                    android.util.Log.d("PhoneShorts", "release: moved " + Math.round(dy) + " of " + Math.round(height)
+                            + ", speed " + Math.round(velocity) + (mIncoming == null ? ", nothing to go to" : ""));
                     if (mIncoming != null && farEnough && rightWay) {
                         commitPage(velocity);
                     } else {
@@ -2181,6 +2190,20 @@ public class PhonePlaybackActivity extends PlaybackActivity implements PhonePlay
             default:
                 return true;
         }
+    }
+
+    /**
+     * The finger's speed in screen coordinates: the Shorts overlay moves with the finger while paging, so its own
+     * coordinates barely change and a flick looked like no speed at all (a swipe had to be long and hard).
+     */
+    private void trackPageVelocity(MotionEvent event) {
+        if (mVelocity == null) {
+            return;
+        }
+        MotionEvent onScreen = MotionEvent.obtain(event);
+        onScreen.setLocation(event.getRawX(), event.getRawY());
+        mVelocity.addMovement(onScreen);
+        onScreen.recycle();
     }
 
     private View playerView() {

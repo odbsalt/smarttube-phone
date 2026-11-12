@@ -86,6 +86,9 @@ final class PhoneShortsQueue {
                             sResumeIndex = 0;
                             appendFeed(feed);
                             warmUp(app);
+                            if (sVideos.size() < 6) {
+                                loadMore(); // the first page can hold only a Short or two: the next ones now
+                            }
                         }
                     }
                     notifyWaiting();
